@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:unit": "sh -c 'mkdir -p .tmp-tests && find .tmp-tests -mindepth 1 ! -name task-2-red-proof.log ! -name task-3-red-proof.log -exec rm -rf {} + && tsc -p tsconfig.test.json && node --test .tmp-tests/test/**/*.test.js'",
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0 --port 3000"
   },

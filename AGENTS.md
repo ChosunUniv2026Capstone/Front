@@ -13,6 +13,7 @@
 - `../docs/01-requirements/req-student-features.md`
 - `../docs/01-requirements/req-professor-features.md`
 - `../docs/01-requirements/req-admin-features.md`
+- `../docs/03-conventions/conv-frontend-experience-design.md`
 - `../docs/03-conventions/conv-api-response.md`
 - `../docs/03-conventions/conv-auth-and-session.md`
 - 출석/시험 관련이면:
@@ -37,3 +38,4 @@
 ## 권장 skill
 - 개발 전 문서 검증: `$spec-first-dev-guard`
 - Git 규약: `$git-governance`
+- 프론트 리디자인/대형 UI 개선: `frontend-delight-workflow`
