@@ -63,11 +63,13 @@ export function LoginScreen({
           <button type="submit">로그인</button>
         </form>
 
-        <div className="login-seed">
-          <p className="meta-label">Seed accounts</p>
-          <code>20201234 / PRF001 / ADM001</code>
-          <code>password: devpass123</code>
-        </div>
+        {import.meta.env.DEV && (
+          <div className="login-seed">
+            <p className="meta-label">Seed accounts</p>
+            <code>20201234 / PRF001 / ADM001</code>
+            <code>password: devpass123</code>
+          </div>
+        )}
 
         {error ? <p className="banner banner--error">{error}</p> : null}
       </section>

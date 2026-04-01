@@ -1,4 +1,4 @@
-Read `../docs/03-conventions/conv-frontend-experience-design.md` first.
+From the repo root, read `../docs/03-conventions/conv-frontend-experience-design.md` first.
 
 You are redesigning `Front` without changing current product behavior.
 

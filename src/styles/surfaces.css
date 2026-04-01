@@ -309,7 +309,7 @@ pre {
 
 @media (max-width: 980px) {
   .workspace-shell {
-    width: min(100% - 20px, 1320px);
+    width: min(1320px, calc(100% - 20px));
     padding: var(--space-5) 0 var(--space-8);
   }
 
