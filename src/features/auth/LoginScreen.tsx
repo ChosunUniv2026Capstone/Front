@@ -1,5 +1,7 @@
 import type { ChangeEventHandler, FormEventHandler } from 'react'
 
+const IS_DEV = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV ?? false
+
 type LoginScreenProps = {
   loginId: string
   password: string
@@ -63,7 +65,7 @@ export function LoginScreen({
           <button type="submit">로그인</button>
         </form>
 
-        {import.meta.env.DEV && (
+        {IS_DEV && (
           <div className="login-seed">
             <p className="meta-label">Seed accounts</p>
             <code>20201234 / PRF001 / ADM001</code>

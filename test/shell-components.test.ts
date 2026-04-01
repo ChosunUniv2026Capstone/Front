@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { AppShell } from '../src/app/AppShell.js'
 import { LoginScreen } from '../src/features/auth/LoginScreen.js'
 
-test('LoginScreen renders the narrative sign-in surface with seed guidance and error messaging', () => {
+test('LoginScreen renders the narrative sign-in surface with error messaging', () => {
   const html = renderToStaticMarkup(
     createElement(LoginScreen, {
       loginId: '20201234',
