@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react'
 import {
   api,
   formatJson,
+  setAccessToken,
   type Classroom,
   type ClassroomNetwork,
   type Course,
@@ -255,6 +256,7 @@ function App() {
     try {
       setError(null)
       const result = await api.login({ login_id: loginId, password })
+      setAccessToken(result.access_token)
       setCurrentUser(result.user)
       resetRoleData()
 
@@ -268,6 +270,7 @@ function App() {
 
       setView('dashboard')
     } catch (caughtError) {
+      setAccessToken(null)
       setCurrentUser(null)
       resetRoleData()
       setError(caughtError instanceof Error ? caughtError.message : '로그인에 실패했습니다.')
@@ -275,6 +278,7 @@ function App() {
   }
 
   function handleLogout() {
+    setAccessToken(null)
     setCurrentUser(null)
     resetRoleData()
     setError(null)
@@ -1093,7 +1097,7 @@ function App() {
           {renderNoticeItems(courseNotices.slice(0, 3))}
         </SectionCard>
 
-        <SectionCard title="최근 학습 자료">
+        <SectionCard title="최근 학습 자료" action={<span className="info-chip">임시 미리보기</span>}>
           {courseLearningItems.length > 0 ? (
             <div className="content-snippet-list">
               {courseLearningItems.slice(0, 3).map((item) => (
@@ -1107,7 +1111,7 @@ function App() {
               ))}
             </div>
           ) : (
-            <p className="empty-state">아직 등록된 학습 자료가 없습니다.</p>
+            <p className="empty-state">아직 표시할 임시 학습 자료가 없습니다.</p>
           )}
         </SectionCard>
       </div>
@@ -1118,7 +1122,7 @@ function App() {
     return (
       <div className="course-stack">
         {isProfessor ? (
-          <SectionCard title="자료·영상 등록" action={<span className="caption-text">등록 후 현재 목록에 바로 반영됩니다.</span>}>
+          <SectionCard title="자료·영상 등록" action={<span className="caption-text">세션 한정 임시 스캐폴드입니다.</span>}>
             <form className="stack" onSubmit={handleAddLearningItem}>
               <div className="field-grid field-grid--3">
                 <label>
@@ -1158,12 +1162,21 @@ function App() {
                   <input value={learningDuration} onChange={(event) => setLearningDuration(event.target.value)} placeholder="예: 20분" />
                 </label>
               ) : null}
-              <button type="submit">{learningKind === 'video' ? '영상 등록' : '자료 등록'}</button>
+              <button type="submit">{learningKind === 'video' ? '임시 영상 등록' : '임시 자료 등록'}</button>
             </form>
           </SectionCard>
         ) : null}
 
-        <SectionCard title="학습 자료·영상" action={<span className="info-chip">총 {courseLearningItems.length}건</span>}>
+        <SectionCard
+          title="학습 자료·영상"
+          action={(
+            <>
+              <span className="info-chip">임시 스캐폴드</span>
+              <span className="info-chip">총 {courseLearningItems.length}건</span>
+            </>
+          )}
+        >
+          <p className="caption-text">현재 세션에서만 유지되며 Backend 또는 DB 에 저장되지 않습니다.</p>
           <div className="content-toolbar">
             <div className="content-filter-group">
               {(['all', 'material', 'video'] as const).map((item) => (
@@ -1205,7 +1218,7 @@ function App() {
                     </button>
                     <div className="content-actions">
                       <button type="button" className="text-button" onClick={() => setSelectedLearningItem(item)}>
-                        {item.kind === 'video' ? '보기' : '열람'}
+                        {item.kind === 'video' ? '임시 보기' : '임시 열람'}
                       </button>
                       {isProfessor ? (
                         <button type="button" className="text-button danger-text" onClick={() => handleDeleteLearningItem(item.id)}>
@@ -1242,9 +1255,13 @@ function App() {
                         <strong>등록자</strong>
                         <span>{selectedLearningItem.author_name}</span>
                       </div>
+                      <div className="helper-row">
+                        <strong>상태</strong>
+                        <span>임시 미리보기 / 세션 한정</span>
+                      </div>
                     </div>
                     <button type="button">
-                      {selectedLearningItem.kind === 'video' ? '영상 정보 보기' : '자료 열람하기'}
+                      {selectedLearningItem.kind === 'video' ? '임시 영상 정보 보기' : '임시 자료 열람하기'}
                     </button>
                   </SectionCard>
                 ) : (
@@ -1253,7 +1270,7 @@ function App() {
               </div>
             </div>
           ) : (
-            <p className="empty-state">아직 등록된 자료나 영상이 없습니다.</p>
+            <p className="empty-state">아직 표시할 임시 자료나 영상이 없습니다.</p>
           )}
         </SectionCard>
       </div>

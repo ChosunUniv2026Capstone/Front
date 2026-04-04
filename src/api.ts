@@ -75,12 +75,34 @@ export type EligibilityResponse = {
   evidence?: Record<string, unknown>
 }
 
+type ApiSuccessEnvelope<T> = {
+  success: true
+  data: T
+  message?: string
+  meta?: Record<string, unknown>
+}
+
+type ApiErrorEnvelope = {
+  success: false
+  error?: {
+    code?: string
+    message?: string
+    details?: Record<string, unknown>
+  }
+}
+
 const API_BASE = (import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+let accessToken: string | null = null
+
+export function setAccessToken(token: string | null) {
+  accessToken = token
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -92,11 +114,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     : await response.text()
 
   if (!response.ok) {
+    const envelope = payload as ApiErrorEnvelope | undefined
     const message =
       typeof payload === 'string'
         ? payload
-        : payload?.detail ?? payload?.message ?? 'Request failed'
+        : envelope?.error?.message ?? payload?.detail ?? payload?.message ?? 'Request failed'
     throw new Error(message)
+  }
+
+  const successEnvelope = payload as ApiSuccessEnvelope<T> | undefined
+  if (successEnvelope && typeof successEnvelope === 'object' && successEnvelope.success === true && 'data' in successEnvelope) {
+    return successEnvelope.data
   }
 
   return payload as T
