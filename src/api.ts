@@ -131,6 +131,8 @@ export const api = {
     }),
   listNotices: (loginId: string) =>
     request<Notice[]>(`/api/notices/${loginId}`),
+  getNoticeDetail: (loginId: string, noticeId: number) =>
+    request<Notice>(`/api/notices/${loginId}/${noticeId}`),
   createNotice: (professorId: string, payload: { title: string; body: string; course_code?: string }) =>
     request<Notice>(`/api/professors/${professorId}/notices`, {
       method: 'POST',
