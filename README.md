@@ -15,7 +15,8 @@
 ## 환경 변수
 
 - `VITE_BACKEND_URL`
-  - 기본값: `http://localhost:8000`
+  - 기본값: 빈 값 (`""`)
+  - nginx path proxy 사용 시 same-origin `/api`, `/health` 경로를 사용한다.
 
 ## 로컬 실행
 
