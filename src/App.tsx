@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, useTransition } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
+  type AdminPresenceOverlayRequest,
+  type AdminPresenceSnapshot,
+  type AdminPresenceStation,
   api,
   formatJson,
   setAccessToken,
@@ -56,6 +59,24 @@ const PURPOSE_LABEL: Record<'attendance' | 'exam', string> = {
 const LEARNING_KIND_LABEL: Record<LearningItem['kind'], string> = {
   material: '자료',
   video: '영상',
+}
+
+const DEMO_STUDENT_LOGIN_ID = '20201239'
+const DEMO_DEVICE_MAC = '52:54:00:12:34:56'
+
+function getEligibilityReasonLabel(reasonCode?: string | null) {
+  switch (reasonCode) {
+    case 'OK':
+      return '현재 조건에서 출석 또는 시험 확인이 가능합니다.'
+    case 'OUTSIDE_CLASS_WINDOW':
+      return '현재 수업 시간이 아니어서 확인이 제한되었습니다.'
+    case 'DEVICE_NOT_REGISTERED':
+      return '등록된 단말 정보가 없어 재실 판정을 진행할 수 없습니다.'
+    case 'DEVICE_NOT_PRESENT':
+      return '등록 단말이 현재 강의실 네트워크에서 관측되지 않았습니다.'
+    default:
+      return '현재 조건으로는 확인이 제한되었습니다.'
+  }
 }
 
 function createLearningSeed(courses: Course[], authorName?: string) {
@@ -163,6 +184,12 @@ function App() {
   const [adminUsers, setAdminUsers] = useState<UserSummary[]>([])
   const [adminClassrooms, setAdminClassrooms] = useState<Classroom[]>([])
   const [adminNetworks, setAdminNetworks] = useState<ClassroomNetwork[]>([])
+  const [adminPresenceSnapshots, setAdminPresenceSnapshots] = useState<Record<string, AdminPresenceSnapshot>>({})
+  const [presenceControlClassroom, setPresenceControlClassroom] = useState('B101')
+  const [presenceControlMac, setPresenceControlMac] = useState(DEMO_DEVICE_MAC)
+  const [presenceControlApId, setPresenceControlApId] = useState('phy3-ap0')
+  const [presenceControlPresent, setPresenceControlPresent] = useState(true)
+  const [presenceControlAssociated, setPresenceControlAssociated] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [health, setHealth] = useState<'checking' | 'online' | 'offline'>('checking')
   const [isPending, startTransition] = useTransition()
@@ -230,9 +257,72 @@ function App() {
       api.listClassrooms(),
       api.listClassroomNetworks(),
     ])
+    const presenceEntries = await Promise.all(
+      classrooms.map(async (classroom) => {
+        try {
+          const snapshot = await api.getAdminPresenceSnapshot(classroom.classroom_code)
+          return [classroom.classroom_code, snapshot] as const
+        } catch {
+          return null
+        }
+      }),
+    )
     setAdminUsers(users)
     setAdminClassrooms(classrooms)
     setAdminNetworks(networks)
+    setAdminPresenceSnapshots(
+      Object.fromEntries(
+        presenceEntries.filter((entry): entry is readonly [string, AdminPresenceSnapshot] => Boolean(entry)),
+      ),
+    )
+  }
+
+  async function refreshAdminPresenceSnapshot(classroomCode: string) {
+    const snapshot = await api.getAdminPresenceSnapshot(classroomCode)
+    setAdminPresenceSnapshots((current) => ({
+      ...current,
+      [classroomCode]: snapshot,
+    }))
+    return snapshot
+  }
+
+  async function handleApplyPresenceControl(event: FormEvent) {
+    event.preventDefault()
+    try {
+      setError(null)
+      const payload: AdminPresenceOverlayRequest = {
+        stations: [
+          {
+            macAddress: presenceControlMac.trim(),
+            apId: presenceControlApId.trim() || null,
+            present: presenceControlPresent,
+            associated: presenceControlPresent ? presenceControlAssociated : false,
+          },
+        ],
+      }
+      await api.applyAdminPresenceOverlay(presenceControlClassroom, payload)
+      await refreshAdminPresenceSnapshot(presenceControlClassroom)
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : '재실 시연 제어를 저장하지 못했습니다.',
+      )
+    }
+  }
+
+  async function handleResetPresenceControl() {
+    try {
+      setError(null)
+      await api.resetAdminPresenceOverlay(presenceControlClassroom)
+      await refreshAdminPresenceSnapshot(presenceControlClassroom)
+      setPresenceControlMac(DEMO_DEVICE_MAC)
+      setPresenceControlApId('phy3-ap0')
+      setPresenceControlPresent(true)
+      setPresenceControlAssociated(true)
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : '재실 시연 제어를 초기화하지 못했습니다.',
+      )
+    }
   }
 
   function resetRoleData() {
@@ -243,6 +333,7 @@ function App() {
     setAdminUsers([])
     setAdminClassrooms([])
     setAdminNetworks([])
+    setAdminPresenceSnapshots({})
     setLearningItems([])
     setSelectedLearningItem(null)
     setSelectedCourse(null)
@@ -765,6 +856,74 @@ function App() {
     )
   }
 
+  function renderPresenceStation(station: AdminPresenceStation) {
+    return (
+      <article key={`${station.macAddress}-${station.ownerLoginId ?? 'guest'}`} className="entity-row">
+        <div>
+          <p className="entity-title">{station.ownerName ?? station.deviceLabel ?? station.macAddress}</p>
+          <p className="entity-subtitle">
+            {station.ownerLoginId ?? '미등록'} · {station.deviceLabel ?? '단말명 없음'} · {station.macAddress}
+          </p>
+        </div>
+        <span className={`badge${station.associated ? '' : ' badge--muted'}`}>
+          {station.associated ? '연결됨' : '관측 안됨'}
+        </span>
+      </article>
+    )
+  }
+
+  function renderAdminPresenceCard(classroom: Classroom) {
+    const snapshot = adminPresenceSnapshots[classroom.classroom_code]
+    const classroomNetworks = adminNetworks.filter(
+      (network) => network.classroom_code === classroom.classroom_code,
+    )
+
+    return (
+      <article key={classroom.id} className="admin-card">
+        <div className="admin-card-head">
+          <div>
+            <p className="entity-title">{classroom.classroom_code}</p>
+            <p className="entity-subtitle">
+              {classroom.name} · {classroom.building ?? '-'} / {classroom.floor_label ?? '-'}
+            </p>
+          </div>
+          <span className="info-chip">
+            {snapshot ? `${snapshot.overlayActive ? 'Overlay' : '기본값'} · AP ${snapshot.aps.length}` : `AP ${classroomNetworks.length}`}
+          </span>
+        </div>
+        {snapshot ? (
+          <div className="helper-list">
+            <div className="helper-row">
+              <strong>수집 방식</strong>
+              <span>{snapshot.collectionMode ?? '-'}</span>
+            </div>
+            <div className="helper-row">
+              <strong>관측 시각</strong>
+              <span>{formatBoardDate(snapshot.observedAt)}</span>
+            </div>
+            {snapshot.aps.map((ap) => (
+              <div key={ap.apId}>
+                <div className="helper-row">
+                  <strong>{ap.apId}</strong>
+                  <span>{ap.ssid}</span>
+                </div>
+                <div className="entity-list">
+                  {ap.stations.length ? (
+                    ap.stations.map(renderPresenceStation)
+                  ) : (
+                    <p className="empty-state">현재 관측된 단말이 없습니다.</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <pre>{formatJson(classroomNetworks)}</pre>
+        )}
+      </article>
+    )
+  }
+
   function renderDashboard() {
     if (isAdmin) {
       return (
@@ -786,27 +945,65 @@ function App() {
 
             <SectionCard title="강의실 및 네트워크 현황">
               <div className="admin-grid">
-                {adminClassrooms.map((classroom) => {
-                  const classroomNetworks = adminNetworks.filter(
-                    (network) => network.classroom_code === classroom.classroom_code,
-                  )
-
-                  return (
-                    <article key={classroom.id} className="admin-card">
-                      <div className="admin-card-head">
-                        <div>
-                          <p className="entity-title">{classroom.classroom_code}</p>
-                          <p className="entity-subtitle">
-                            {classroom.name} · {classroom.building ?? '-'} / {classroom.floor_label ?? '-'}
-                          </p>
-                        </div>
-                        <span className="info-chip">AP {classroomNetworks.length}</span>
-                      </div>
-                      <pre>{formatJson(classroomNetworks)}</pre>
-                    </article>
-                  )
-                })}
+                {adminClassrooms.map(renderAdminPresenceCard)}
               </div>
+            </SectionCard>
+
+            <SectionCard title="재실 시연 제어" action={<span className="info-chip">Demo mode</span>}>
+              <form className="stack-form" onSubmit={(event) => void handleApplyPresenceControl(event)}>
+                <label>
+                  강의실
+                  <select
+                    value={presenceControlClassroom}
+                    onChange={(event) => setPresenceControlClassroom(event.target.value)}
+                  >
+                    {adminClassrooms.map((classroom) => (
+                      <option key={classroom.id} value={classroom.classroom_code}>
+                        {classroom.classroom_code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  대상 학생
+                  <input value={DEMO_STUDENT_LOGIN_ID} readOnly />
+                </label>
+                <label>
+                  대상 MAC
+                  <input value={presenceControlMac} onChange={(event) => setPresenceControlMac(event.target.value)} />
+                </label>
+                <label>
+                  AP ID
+                  <input value={presenceControlApId} onChange={(event) => setPresenceControlApId(event.target.value)} />
+                </label>
+                <label>
+                  관측 여부
+                  <select
+                    value={presenceControlPresent ? 'present' : 'missing'}
+                    onChange={(event) => setPresenceControlPresent(event.target.value === 'present')}
+                  >
+                    <option value="present">관측됨</option>
+                    <option value="missing">관측 안됨</option>
+                  </select>
+                </label>
+                <label>
+                  연결 상태
+                  <select
+                    value={presenceControlAssociated ? 'associated' : 'detached'}
+                    onChange={(event) => setPresenceControlAssociated(event.target.value === 'associated')}
+                    disabled={!presenceControlPresent}
+                  >
+                    <option value="associated">associated</option>
+                    <option value="detached">not associated</option>
+                  </select>
+                </label>
+                <div className="section-head-action">
+                  <button type="submit">재실 상태 적용</button>
+                  <button type="button" className="secondary-button" onClick={() => void handleResetPresenceControl()}>
+                    Overlay 초기화
+                  </button>
+                </div>
+              </form>
             </SectionCard>
           </div>
 
@@ -1374,7 +1571,8 @@ function App() {
                 <span className={`status-pill status-pill--${eligibility.eligible ? 'ok' : 'blocked'}`}>
                   {eligibility.eligible ? '이용 가능' : '이용 불가'}
                 </span>
-                <p>{eligibility.reason_code}</p>
+                <p>{getEligibilityReasonLabel(eligibility.reason_code)}</p>
+                <span className="caption-text">reason_code: {eligibility.reason_code}</span>
               </div>
               <div className="detail-grid">
                 <div>

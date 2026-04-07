@@ -75,6 +75,51 @@ export type EligibilityResponse = {
   evidence?: Record<string, unknown>
 }
 
+export type AdminPresenceStation = {
+  macAddress: string
+  associated?: boolean | null
+  authenticated?: boolean | null
+  authorized?: boolean | null
+  signalDbm?: number | null
+  connectedSeconds?: number | null
+  rxBytes?: number | null
+  txBytes?: number | null
+  deviceLabel?: string | null
+  ownerName?: string | null
+  ownerLoginId?: string | null
+}
+
+export type AdminPresenceAccessPoint = {
+  apId: string
+  ssid: string
+  sourceCommand: string
+  stations: AdminPresenceStation[]
+}
+
+export type AdminPresenceSnapshot = {
+  cacheHit: boolean
+  overlayActive: boolean
+  classroomCode: string
+  observedAt?: string | null
+  collectionMode?: string | null
+  aps: AdminPresenceAccessPoint[]
+}
+
+export type AdminPresenceOverlayRequest = {
+  stations: Array<{
+    macAddress: string
+    apId?: string | null
+    present: boolean
+    associated?: boolean | null
+    authorized?: boolean | null
+    authenticated?: boolean | null
+    signalDbm?: number | null
+    connectedSeconds?: number | null
+    rxBytes?: number | null
+    txBytes?: number | null
+  }>
+}
+
 type ApiSuccessEnvelope<T> = {
   success: true
   data: T
@@ -109,9 +154,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   const contentType = response.headers.get('content-type') ?? ''
-  const payload = contentType.includes('application/json')
-    ? await response.json()
-    : await response.text()
+  const payload = contentType.includes('application/json') ? await response.json() : await response.text()
 
   if (!response.ok) {
     const envelope = payload as ApiErrorEnvelope | undefined
@@ -123,7 +166,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const successEnvelope = payload as ApiSuccessEnvelope<T> | undefined
-  if (successEnvelope && typeof successEnvelope === 'object' && successEnvelope.success === true && 'data' in successEnvelope) {
+  if (
+    successEnvelope &&
+    typeof successEnvelope === 'object' &&
+    successEnvelope.success === true &&
+    'data' in successEnvelope
+  ) {
     return successEnvelope.data
   }
 
@@ -137,12 +185,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  listStudentCourses: (studentId: string) =>
-    request<Course[]>(`/api/students/${studentId}/courses`),
-  listProfessorCourses: (professorId: string) =>
-    request<Course[]>(`/api/professors/${professorId}/courses`),
-  listDevices: (studentId: string) =>
-    request<Device[]>(`/api/students/${studentId}/devices`),
+  listStudentCourses: (studentId: string) => request<Course[]>(`/api/students/${studentId}/courses`),
+  listProfessorCourses: (professorId: string) => request<Course[]>(`/api/professors/${professorId}/courses`),
+  listDevices: (studentId: string) => request<Device[]>(`/api/students/${studentId}/devices`),
   createDevice: (studentId: string, payload: { label: string; mac_address: string }) =>
     request<Device>(`/api/students/${studentId}/devices`, {
       method: 'POST',
@@ -157,10 +202,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  listNotices: (loginId: string) =>
-    request<Notice[]>(`/api/notices/${loginId}`),
-  getNoticeDetail: (loginId: string, noticeId: number) =>
-    request<Notice>(`/api/notices/${loginId}/${noticeId}`),
+  listNotices: (loginId: string) => request<Notice[]>(`/api/notices/${loginId}`),
+  getNoticeDetail: (loginId: string, noticeId: number) => request<Notice>(`/api/notices/${loginId}/${noticeId}`),
   createNotice: (professorId: string, payload: { title: string; body: string; course_code?: string }) =>
     request<Notice>(`/api/professors/${professorId}/notices`, {
       method: 'POST',
@@ -169,6 +212,17 @@ export const api = {
   listUsers: () => request<UserSummary[]>('/api/admin/users'),
   listClassrooms: () => request<Classroom[]>('/api/admin/classrooms'),
   listClassroomNetworks: () => request<ClassroomNetwork[]>('/api/admin/classroom-networks'),
+  getAdminPresenceSnapshot: (classroomCode: string) =>
+    request<AdminPresenceSnapshot>(`/api/admin/presence/classrooms/${classroomCode}/snapshot`),
+  applyAdminPresenceOverlay: (classroomCode: string, payload: AdminPresenceOverlayRequest) =>
+    request<AdminPresenceSnapshot>(`/api/admin/presence/classrooms/${classroomCode}/dummy-controls`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  resetAdminPresenceOverlay: (classroomCode: string) =>
+    request<AdminPresenceSnapshot>(`/api/admin/presence/classrooms/${classroomCode}/dummy-controls/reset`, {
+      method: 'POST',
+    }),
 }
 
 export function formatJson(value: unknown) {
