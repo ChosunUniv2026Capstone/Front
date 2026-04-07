@@ -455,7 +455,7 @@ function App() {
         }
         const result = await api.checkEligibility({
           student_id: studentId,
-          course_id: selectedCourse.course_code,
+          course_code: selectedCourse.course_code,
         })
         setEligibility(result)
       } catch (caughtError) {

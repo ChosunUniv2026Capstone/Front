@@ -62,9 +62,7 @@ export type ClassroomNetwork = {
 
 export type EligibilityRequest = {
   student_id: string
-  course_id: string
-  classroom_id?: string
-  purpose?: 'attendance' | 'exam'
+  course_code: string
 }
 
 export type EligibilityResponse = {
