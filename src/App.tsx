@@ -19,6 +19,7 @@ import {
 
 type AppView = 'dashboard' | 'profile' | 'course' | 'notice'
 type CourseSection = 'overview' | 'content' | 'notices' | 'attendance' | 'manage'
+type AdminTab = 'users' | 'networks' | 'demo'
 
 type LearningItem = {
   id: string
@@ -51,17 +52,11 @@ const HEALTH_LABEL: Record<'checking' | 'online' | 'offline', string> = {
   offline: '오프라인',
 }
 
-const PURPOSE_LABEL: Record<'attendance' | 'exam', string> = {
-  attendance: '출석',
-  exam: '시험',
-}
-
 const LEARNING_KIND_LABEL: Record<LearningItem['kind'], string> = {
   material: '자료',
   video: '영상',
 }
 
-const DEMO_STUDENT_LOGIN_ID = '20201239'
 const DEMO_DEVICE_MAC = '52:54:00:12:34:56'
 
 function getEligibilityReasonLabel(reasonCode?: string | null) {
@@ -127,6 +122,19 @@ function formatBoardDate(value?: string | null) {
   return `${year}-${month}-${day}`
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  const year = String(parsed.getFullYear()).slice(2)
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  const hours = String(parsed.getHours()).padStart(2, '0')
+  const minutes = String(parsed.getMinutes()).padStart(2, '0')
+  const seconds = String(parsed.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
 function SectionCard({
   title,
   action,
@@ -158,15 +166,13 @@ function App() {
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null)
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null)
   const [noticeReturnView, setNoticeReturnView] = useState<AppView>('dashboard')
+  const [adminTab, setAdminTab] = useState<AdminTab>('users')
 
   const [studentId, setStudentId] = useState('20201234')
   const [label, setLabel] = useState('')
   const [macAddress, setMacAddress] = useState('')
-  const [courseId, setCourseId] = useState('CSE101')
-  const [classroomId, setClassroomId] = useState('B101')
   const [noticeTitle, setNoticeTitle] = useState('')
   const [noticeBody, setNoticeBody] = useState('')
-  const [purpose, setPurpose] = useState<'attendance' | 'exam'>('attendance')
   const [learningItems, setLearningItems] = useState<LearningItem[]>([])
   const [selectedLearningItem, setSelectedLearningItem] = useState<LearningItem | null>(null)
   const [learningFilter, setLearningFilter] = useState<'all' | LearningItem['kind']>('all')
@@ -186,10 +192,11 @@ function App() {
   const [adminNetworks, setAdminNetworks] = useState<ClassroomNetwork[]>([])
   const [adminPresenceSnapshots, setAdminPresenceSnapshots] = useState<Record<string, AdminPresenceSnapshot>>({})
   const [presenceControlClassroom, setPresenceControlClassroom] = useState('B101')
-  const [presenceControlMac, setPresenceControlMac] = useState(DEMO_DEVICE_MAC)
+  const [presenceControlDeviceMac, setPresenceControlDeviceMac] = useState(DEMO_DEVICE_MAC)
   const [presenceControlApId, setPresenceControlApId] = useState('phy3-ap0')
-  const [presenceControlPresent, setPresenceControlPresent] = useState(true)
   const [presenceControlAssociated, setPresenceControlAssociated] = useState(true)
+  const [presenceControlSignalDbm, setPresenceControlSignalDbm] = useState(-47)
+  const [presenceThresholdDbm, setPresenceThresholdDbm] = useState(-65)
   const [error, setError] = useState<string | null>(null)
   const [health, setHealth] = useState<'checking' | 'online' | 'offline'>('checking')
   const [isPending, startTransition] = useTransition()
@@ -197,6 +204,12 @@ function App() {
   const isStudent = currentUser?.role === 'student'
   const isProfessor = currentUser?.role === 'professor'
   const isAdmin = currentUser?.role === 'admin'
+  const selectedAdminSnapshot = adminPresenceSnapshots[presenceControlClassroom]
+  const selectedAdminNetwork = useMemo(
+    () =>
+      selectedAdminSnapshot?.classroomNetworks.find((network) => network.ap_id === presenceControlApId) ?? null,
+    [presenceControlApId, selectedAdminSnapshot],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -270,11 +283,30 @@ function App() {
     setAdminUsers(users)
     setAdminClassrooms(classrooms)
     setAdminNetworks(networks)
-    setAdminPresenceSnapshots(
-      Object.fromEntries(
-        presenceEntries.filter((entry): entry is readonly [string, AdminPresenceSnapshot] => Boolean(entry)),
-      ),
+    const nextSnapshots = Object.fromEntries(
+      presenceEntries.filter((entry): entry is readonly [string, AdminPresenceSnapshot] => Boolean(entry)),
     )
+    setAdminPresenceSnapshots(nextSnapshots)
+    const initialSnapshot = nextSnapshots[presenceControlClassroom]
+    const initialDevice =
+      initialSnapshot?.deviceOptions.find((option) => option.macAddress === DEMO_DEVICE_MAC) ??
+      initialSnapshot?.deviceOptions[0]
+    if (initialDevice) {
+      setPresenceControlDeviceMac(initialDevice.macAddress)
+    }
+    const initialAp = initialSnapshot?.aps[0]
+    if (initialAp) {
+      setPresenceControlApId(initialAp.apId)
+      const matchingNetwork = nextSnapshots[presenceControlClassroom]?.classroomNetworks.find(
+        (network) => network.ap_id === initialAp.apId,
+      )
+      setPresenceThresholdDbm(matchingNetwork?.signal_threshold_dbm ?? -65)
+      const initialStation = initialAp.stations.find((station) => station.macAddress === (initialDevice?.macAddress ?? DEMO_DEVICE_MAC))
+      if (initialStation) {
+        setPresenceControlAssociated(Boolean(initialStation.associated))
+        setPresenceControlSignalDbm(initialStation.signalDbm ?? -47)
+      }
+    }
   }
 
   async function refreshAdminPresenceSnapshot(classroomCode: string) {
@@ -283,6 +315,13 @@ function App() {
       ...current,
       [classroomCode]: snapshot,
     }))
+    const matchingDevice =
+      snapshot.deviceOptions.find((option) => option.macAddress === presenceControlDeviceMac) ?? snapshot.deviceOptions[0]
+    if (matchingDevice) {
+      setPresenceControlDeviceMac(matchingDevice.macAddress)
+    }
+    const matchingNetwork = snapshot.classroomNetworks.find((network) => network.ap_id === presenceControlApId)
+    setPresenceThresholdDbm(matchingNetwork?.signal_threshold_dbm ?? -65)
     return snapshot
   }
 
@@ -293,12 +332,17 @@ function App() {
       const payload: AdminPresenceOverlayRequest = {
         stations: [
           {
-            macAddress: presenceControlMac.trim(),
+            macAddress: presenceControlDeviceMac.trim(),
             apId: presenceControlApId.trim() || null,
-            present: presenceControlPresent,
-            associated: presenceControlPresent ? presenceControlAssociated : false,
+            associated: presenceControlAssociated,
+            signalDbm: presenceControlSignalDbm,
           },
         ],
+      }
+      if (selectedAdminNetwork) {
+        await api.updateClassroomNetworkThreshold(selectedAdminNetwork.id, {
+          signal_threshold_dbm: presenceThresholdDbm,
+        })
       }
       await api.applyAdminPresenceOverlay(presenceControlClassroom, payload)
       await refreshAdminPresenceSnapshot(presenceControlClassroom)
@@ -314,10 +358,11 @@ function App() {
       setError(null)
       await api.resetAdminPresenceOverlay(presenceControlClassroom)
       await refreshAdminPresenceSnapshot(presenceControlClassroom)
-      setPresenceControlMac(DEMO_DEVICE_MAC)
+      setPresenceControlDeviceMac(DEMO_DEVICE_MAC)
       setPresenceControlApId('phy3-ap0')
-      setPresenceControlPresent(true)
       setPresenceControlAssociated(true)
+      setPresenceControlSignalDbm(-47)
+      setPresenceThresholdDbm(-65)
     } catch (caughtError) {
       setError(
         caughtError instanceof Error ? caughtError.message : '재실 시연 제어를 초기화하지 못했습니다.',
@@ -404,17 +449,17 @@ function App() {
     startTransition(async () => {
       try {
         setError(null)
+        if (!selectedCourse) {
+          setError('현재 강의를 먼저 선택해주세요.')
+          return
+        }
         const result = await api.checkEligibility({
           student_id: studentId,
-          course_id: courseId,
-          classroom_id: classroomId,
-          purpose,
+          course_id: selectedCourse.course_code,
         })
         setEligibility(result)
       } catch (caughtError) {
-        setError(
-          caughtError instanceof Error ? caughtError.message : '출석 또는 시험 확인에 실패했습니다.',
-        )
+        setError(caughtError instanceof Error ? caughtError.message : '재실 확인에 실패했습니다.')
       }
     })
   }
@@ -428,7 +473,7 @@ function App() {
       await api.createNotice(currentUser.login_id, {
         title: noticeTitle,
         body: noticeBody,
-        course_code: selectedCourse?.course_code ?? courseId,
+        course_code: selectedCourse?.course_code,
       })
       setNoticeTitle('')
       setNoticeBody('')
@@ -440,8 +485,6 @@ function App() {
 
   function openCourse(course: Course) {
     setSelectedCourse(course)
-    setCourseId(course.course_code)
-    setClassroomId(course.classroom_code ?? 'B101')
     setEligibility(null)
     setCourseSection('overview')
     setSelectedLearningItem(null)
@@ -675,19 +718,20 @@ function App() {
 
         <nav id="main-nav" className="main-nav" aria-label="주요 메뉴">
           <button type="button" className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>
-            교육현황
+            대시보드
           </button>
           <button type="button" className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')}>
             내 정보
           </button>
-          <button
-            type="button"
-            className={view === 'course' ? 'active' : ''}
-            onClick={() => setView(selectedCourse ? 'course' : 'dashboard')}
-            disabled={!selectedCourse}
-          >
-            강의 상세
-          </button>
+          {selectedCourse ? (
+            <button
+              type="button"
+              className={view === 'course' ? 'active' : ''}
+              onClick={() => setView('course')}
+            >
+              강의 상세
+            </button>
+          ) : null}
         </nav>
       </header>
     )
@@ -866,7 +910,7 @@ function App() {
           </p>
         </div>
         <span className={`badge${station.associated ? '' : ' badge--muted'}`}>
-          {station.associated ? '연결됨' : '관측 안됨'}
+          {station.associated ? '연결됨' : '연결 끊김'}
         </span>
       </article>
     )
@@ -899,7 +943,13 @@ function App() {
             </div>
             <div className="helper-row">
               <strong>관측 시각</strong>
-              <span>{formatBoardDate(snapshot.observedAt)}</span>
+              <span>{formatDateTime(snapshot.observedAt)}</span>
+            </div>
+            <div className="helper-row">
+              <strong>Threshold</strong>
+              <span>
+                {snapshot.classroomNetworks.map((network) => `${network.ap_id} ${network.signal_threshold_dbm ?? -65} dBm`).join(' · ')}
+              </span>
             </div>
             {snapshot.aps.map((ap) => (
               <div key={ap.apId}>
@@ -926,85 +976,143 @@ function App() {
 
   function renderDashboard() {
     if (isAdmin) {
+      const selectedNetworks = selectedAdminSnapshot?.classroomNetworks ?? []
+      const selectedDeviceOptions = selectedAdminSnapshot?.deviceOptions ?? []
       return (
         <section className="content-grid">
           <div className="main-column">
-            <SectionCard title="사용자 현황" action={<span className="info-chip">총 {adminUsers.length}명</span>}>
-              <div className="entity-list">
-                {adminUsers.map((user) => (
-                  <article key={user.id} className="entity-row">
-                    <div>
-                      <p className="entity-title">{user.name}</p>
-                      <p className="entity-subtitle">{user.login_id}</p>
-                    </div>
-                    <span className="badge">{ROLE_LABEL[user.role]}</span>
-                  </article>
-                ))}
-              </div>
-            </SectionCard>
+            <div className="menu-row">
+              <button type="button" className={adminTab === 'users' ? 'menu-button active' : 'menu-button'} onClick={() => setAdminTab('users')}>
+                사용자 현황
+              </button>
+              <button type="button" className={adminTab === 'networks' ? 'menu-button active' : 'menu-button'} onClick={() => setAdminTab('networks')}>
+                강의실 및 네트워크 현황
+              </button>
+              <button type="button" className={adminTab === 'demo' ? 'menu-button active' : 'menu-button'} onClick={() => setAdminTab('demo')}>
+                재실 시연 제어 (demo)
+              </button>
+            </div>
 
-            <SectionCard title="강의실 및 네트워크 현황">
-              <div className="admin-grid">
-                {adminClassrooms.map(renderAdminPresenceCard)}
-              </div>
-            </SectionCard>
-
-            <SectionCard title="재실 시연 제어" action={<span className="info-chip">Demo mode</span>}>
-              <form className="stack-form" onSubmit={(event) => void handleApplyPresenceControl(event)}>
-                <label>
-                  강의실
-                  <select
-                    value={presenceControlClassroom}
-                    onChange={(event) => setPresenceControlClassroom(event.target.value)}
-                  >
-                    {adminClassrooms.map((classroom) => (
-                      <option key={classroom.id} value={classroom.classroom_code}>
-                        {classroom.classroom_code}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  대상 학생
-                  <input value={DEMO_STUDENT_LOGIN_ID} readOnly />
-                </label>
-                <label>
-                  대상 MAC
-                  <input value={presenceControlMac} onChange={(event) => setPresenceControlMac(event.target.value)} />
-                </label>
-                <label>
-                  AP ID
-                  <input value={presenceControlApId} onChange={(event) => setPresenceControlApId(event.target.value)} />
-                </label>
-                <label>
-                  관측 여부
-                  <select
-                    value={presenceControlPresent ? 'present' : 'missing'}
-                    onChange={(event) => setPresenceControlPresent(event.target.value === 'present')}
-                  >
-                    <option value="present">관측됨</option>
-                    <option value="missing">관측 안됨</option>
-                  </select>
-                </label>
-                <label>
-                  연결 상태
-                  <select
-                    value={presenceControlAssociated ? 'associated' : 'detached'}
-                    onChange={(event) => setPresenceControlAssociated(event.target.value === 'associated')}
-                    disabled={!presenceControlPresent}
-                  >
-                    <option value="associated">associated</option>
-                    <option value="detached">not associated</option>
-                  </select>
-                </label>
-                <div className="section-head-action">
-                  <button type="submit">재실 상태 적용</button>
-                  <button type="button" className="secondary-button" onClick={() => void handleResetPresenceControl()}>
-                    Overlay 초기화
-                  </button>
+            {adminTab === 'users' ? (
+              <SectionCard title="사용자 현황" action={<span className="info-chip">총 {adminUsers.length}명</span>}>
+                <div className="entity-list">
+                  {adminUsers.map((user) => (
+                    <article key={user.id} className="entity-row">
+                      <div>
+                        <p className="entity-title">{user.name}</p>
+                        <p className="entity-subtitle">{user.login_id}</p>
+                      </div>
+                      <span className="badge">{ROLE_LABEL[user.role]}</span>
+                    </article>
+                  ))}
                 </div>
-              </form>
-            </SectionCard>
+              </SectionCard>
+            ) : null}
+
+            {adminTab === 'networks' ? (
+              <SectionCard title="강의실 및 네트워크 현황">
+                <div className="admin-grid">
+                  {adminClassrooms.map(renderAdminPresenceCard)}
+                </div>
+              </SectionCard>
+            ) : null}
+
+            {adminTab === 'demo' ? (
+              <SectionCard title="재실 시연 제어" action={<span className="info-chip">Demo mode</span>}>
+                <form className="stack-form" onSubmit={(event) => void handleApplyPresenceControl(event)}>
+                  <label>
+                    강의실
+                    <select
+                      value={presenceControlClassroom}
+                      onChange={(event) => setPresenceControlClassroom(event.target.value)}
+                    >
+                      {adminClassrooms.map((classroom) => (
+                        <option key={classroom.id} value={classroom.classroom_code}>
+                          {classroom.classroom_code}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    디바이스 선택
+                    <select
+                      value={presenceControlDeviceMac}
+                      onChange={(event) => setPresenceControlDeviceMac(event.target.value)}
+                    >
+                      {selectedDeviceOptions.map((option) => (
+                        <option key={option.macAddress} value={option.macAddress}>
+                          {[option.studentLoginId, option.studentName, option.deviceLabel, option.macAddress].filter(Boolean).join(' / ')}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    AP ID
+                    <select
+                      value={presenceControlApId}
+                      onChange={(event) => {
+                        const nextApId = event.target.value
+                        setPresenceControlApId(nextApId)
+                        const nextNetwork = selectedAdminSnapshot?.classroomNetworks.find((network) => network.ap_id === nextApId)
+                        setPresenceThresholdDbm(nextNetwork?.signal_threshold_dbm ?? -65)
+                      }}
+                    >
+                      {selectedAdminSnapshot?.aps.map((ap) => (
+                        <option key={ap.apId} value={ap.apId}>
+                          {ap.apId} / {ap.ssid}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    연결 상태
+                    <select
+                      value={presenceControlAssociated ? 'associated' : 'detached'}
+                      onChange={(event) => setPresenceControlAssociated(event.target.value === 'associated')}
+                    >
+                      <option value="associated">연결됨</option>
+                      <option value="detached">연결 끊김</option>
+                    </select>
+                  </label>
+                  <label>
+                    신호 세기 ({presenceControlSignalDbm} dBm)
+                    <input
+                      type="range"
+                      min={-90}
+                      max={-30}
+                      step={1}
+                      value={presenceControlSignalDbm}
+                      onChange={(event) => setPresenceControlSignalDbm(Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    AP threshold ({presenceThresholdDbm} dBm)
+                    <input
+                      type="range"
+                      min={-90}
+                      max={-30}
+                      step={1}
+                      value={presenceThresholdDbm}
+                      onChange={(event) => setPresenceThresholdDbm(Number(event.target.value))}
+                    />
+                  </label>
+                  <div className="helper-list">
+                    {selectedNetworks.map((network) => (
+                      <div key={network.id} className="helper-row">
+                        <strong>{network.ap_id}</strong>
+                        <span>{network.signal_threshold_dbm ?? -65} dBm</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="section-head-action">
+                    <button type="submit">재실 상태 적용</button>
+                    <button type="button" className="secondary-button" onClick={() => void handleResetPresenceControl()}>
+                      Overlay 초기화
+                    </button>
+                  </div>
+                </form>
+              </SectionCard>
+            ) : null}
           </div>
 
           <aside className="side-column">
@@ -1101,9 +1209,11 @@ function App() {
           <SectionCard title="빠른 메뉴" compact>
             <div className="quick-actions">
               <button type="button" onClick={() => setView('profile')}>내 정보</button>
-              <button type="button" onClick={() => (selectedCourse ? setView('course') : setView('dashboard'))}>
-                강의 상세 열기
-              </button>
+              {selectedCourse ? (
+                <button type="button" onClick={() => setView('course')}>
+                  강의 상세 열기
+                </button>
+              ) : null}
               {isStudent ? (
                 <button type="button" onClick={() => setView('profile')}>등록 단말 관리</button>
               ) : (
@@ -1533,28 +1643,22 @@ function App() {
         {isStudent ? (
           <SectionCard title="출석 · 시험 확인" action={<span className="caption-text">현재 강의 기준으로 확인합니다.</span>}>
             <form className="stack" onSubmit={handleCheckEligibility}>
-              <div className="field-grid field-grid--3">
-                <label>
-                  강의 코드
-                  <input value={courseId} onChange={(event) => setCourseId(event.target.value)} />
-                </label>
-                <label>
-                  강의실
-                  <input value={classroomId} onChange={(event) => setClassroomId(event.target.value)} />
-                </label>
-                <label>
-                  확인 항목
-                  <select
-                    value={purpose}
-                    onChange={(event) => setPurpose(event.target.value as 'attendance' | 'exam')}
-                  >
-                    <option value="attendance">출석</option>
-                    <option value="exam">시험</option>
-                  </select>
-                </label>
+              <div className="helper-list">
+                <div className="helper-row">
+                  <strong>강의 코드</strong>
+                  <span>{selectedCourse?.course_code ?? '-'}</span>
+                </div>
+                <div className="helper-row">
+                  <strong>강의실</strong>
+                  <span>서버 매핑 기준 자동 확인</span>
+                </div>
+                <div className="helper-row">
+                  <strong>확인 방식</strong>
+                  <span>현재 강의 기준 자동 확인</span>
+                </div>
               </div>
               <button type="submit" disabled={isPending}>
-                {isPending ? '확인 중...' : `${PURPOSE_LABEL[purpose]} 가능 여부 확인`}
+                {isPending ? '확인 중...' : '재실 가능 여부 확인'}
               </button>
             </form>
           </SectionCard>

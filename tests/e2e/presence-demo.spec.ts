@@ -6,6 +6,26 @@ const adminSnapshot = (overlayActive: boolean) => ({
   classroomCode: 'B101',
   observedAt: '2026-04-07T15:05:00+09:00',
   collectionMode: 'dummy-openwrt',
+  classroomNetworks: [
+    {
+      id: 1,
+      classroom_code: 'B101',
+      ap_id: 'phy3-ap0',
+      ssid: 'CU-B101-2G-2',
+      gateway_host: 'gw',
+      signal_threshold_dbm: -65,
+      collection_mode: 'dummy',
+    },
+  ],
+  deviceOptions: [
+    {
+      studentLoginId: '20201239',
+      studentName: 'Kim Student 06',
+      deviceLabel: 'Choi Phone',
+      macAddress: '52:54:00:12:34:56',
+      observed: overlayActive,
+    },
+  ],
   aps: [
     {
       apId: 'phy3-ap0',
@@ -30,7 +50,7 @@ const adminSnapshot = (overlayActive: boolean) => ({
   ],
 })
 
-test('admin overlay controls and student eligibility change are visible', async ({ page, browser }) => {
+test('admin overlay controls and student eligibility change are visible', async ({ page }) => {
   let overlayApplied = false
 
   await page.route('**/health', async (route) => {
@@ -78,6 +98,11 @@ test('admin overlay controls and student eligibility change are visible', async 
       ],
     })
   })
+  await page.route('**/api/admin/classroom-networks/1', async (route) => {
+    await route.fulfill({
+      json: { id: 1, classroom_code: 'B101', ap_id: 'phy3-ap0', ssid: 'CU-B101-2G-2', gateway_host: 'gw', signal_threshold_dbm: -65, collection_mode: 'dummy' },
+    })
+  })
 
   await page.route('**/api/admin/presence/classrooms/B101/snapshot', async (route) => {
     await route.fulfill({ json: adminSnapshot(overlayApplied) })
@@ -93,43 +118,20 @@ test('admin overlay controls and student eligibility change are visible', async 
     await route.fulfill({ json: adminSnapshot(false) })
   })
 
-  await page.goto('/')
-  await page.getByLabel('아이디').fill('ADM001')
-  await page.getByLabel('비밀번호').fill('devpass123')
-  await page.getByRole('button', { name: '로그인' }).click()
-
-  await expect(page.locator('.entity-row', { hasText: '20201239' }).first()).toBeVisible()
-  await expect(page.locator('.entity-row', { hasText: 'Choi Phone' }).first()).toBeVisible()
-  await page.getByRole('button', { name: '재실 상태 적용' }).click()
-  await expect(page.getByText('Overlay · AP 1')).toBeVisible()
-
-  const studentPage = await browser.newPage()
-  await studentPage.route('**/health', async (route) => {
-    await route.fulfill({ json: { status: 'ok' } })
-  })
-  await studentPage.route('**/api/auth/login', async (route) => {
-    const body = route.request().postDataJSON() as { login_id: string }
-    await route.fulfill({
-      json: {
-        access_token: `dev-token:${body.login_id}`,
-        user: { id: 901, role: 'student', login_id: body.login_id, name: 'Kim Student 06' },
-      },
-    })
-  })
-  await studentPage.route('**/api/students/20201239/courses', async (route) => {
+  await page.route('**/api/students/20201239/courses', async (route) => {
     await route.fulfill({
       json: [
         { id: 1, course_code: 'CSE116', title: 'Capstone Design A', professor_name: 'Lee Professor 02', classroom_code: 'B101' },
       ],
     })
   })
-  await studentPage.route('**/api/notices/20201239', async (route) => {
+  await page.route('**/api/notices/20201239', async (route) => {
     await route.fulfill({ json: [] })
   })
-  await studentPage.route('**/api/students/20201239/devices', async (route) => {
+  await page.route('**/api/students/20201239/devices', async (route) => {
     await route.fulfill({ json: [{ id: 1, label: 'Choi Phone', mac_address: '52:54:00:12:34:56', status: 'active' }] })
   })
-  await studentPage.route('**/api/attendance/eligibility', async (route) => {
+  await page.route('**/api/attendance/eligibility', async (route) => {
     await route.fulfill({
       json: overlayApplied
         ? {
@@ -142,22 +144,33 @@ test('admin overlay controls and student eligibility change are visible', async 
           }
         : {
             eligible: false,
-            reason_code: 'DEVICE_NOT_PRESENT',
-            matched_device_mac: null,
+            reason_code: 'NETWORK_NOT_ELIGIBLE',
+            matched_device_mac: '52:54:00:12:34:56',
             observed_at: '2026-04-07T15:05:00+09:00',
             snapshot_age_seconds: 2,
-            evidence: { classroomId: 'B101', matchedApIds: [] },
+            evidence: { classroomId: 'B101', matchedApIds: ['phy3-ap0'] },
           },
     })
   })
 
-  await studentPage.goto('/')
-  await studentPage.getByLabel('아이디').fill('20201239')
-  await studentPage.getByLabel('비밀번호').fill('devpass123')
-  await studentPage.getByRole('button', { name: '로그인' }).click()
-  await studentPage.getByRole('button', { name: '바로가기' }).click()
-  await studentPage.getByRole('button', { name: '출석 · 시험 확인' }).click()
-  await studentPage.getByRole('button', { name: '출석 가능 여부 확인' }).click()
-  await expect(studentPage.getByText('현재 조건에서 출석 또는 시험 확인이 가능합니다.')).toBeVisible()
-  await expect(studentPage.getByText('reason_code: OK')).toBeVisible()
+  await page.goto('/')
+  await page.getByLabel('아이디').fill('ADM001')
+  await page.getByLabel('비밀번호').fill('devpass123')
+  await page.getByRole('button', { name: '로그인' }).click()
+
+  await page.getByRole('button', { name: '재실 시연 제어 (demo)' }).click()
+  await expect(page.getByRole('combobox').nth(1)).toContainText('20201239 / Kim Student 06 / Choi Phone / 52:54:00:12:34:56')
+  await page.getByRole('button', { name: '재실 상태 적용' }).click()
+  await page.getByRole('button', { name: '강의실 및 네트워크 현황' }).click()
+  await expect(page.getByText('phy3-ap0').first()).toBeVisible()
+
+  await page.getByRole('button', { name: '로그아웃' }).click()
+  await page.getByLabel('아이디').fill('20201239')
+  await page.getByLabel('비밀번호').fill('devpass123')
+  await page.getByRole('button', { name: '로그인' }).click()
+  await page.getByRole('button', { name: '바로가기' }).click()
+  await page.getByRole('button', { name: '출석 · 시험 확인' }).click()
+  await page.getByRole('button', { name: '재실 가능 여부 확인' }).click()
+  await expect(page.getByText('이용 가능')).toBeVisible()
+  await expect(page.getByText('reason_code: OK')).toBeVisible()
 })

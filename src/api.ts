@@ -56,14 +56,15 @@ export type ClassroomNetwork = {
   ap_id: string
   ssid: string
   gateway_host?: string | null
+  signal_threshold_dbm?: number | null
   collection_mode: string
 }
 
 export type EligibilityRequest = {
   student_id: string
   course_id: string
-  classroom_id: string
-  purpose: 'attendance' | 'exam'
+  classroom_id?: string
+  purpose?: 'attendance' | 'exam'
 }
 
 export type EligibilityResponse = {
@@ -103,13 +104,14 @@ export type AdminPresenceSnapshot = {
   observedAt?: string | null
   collectionMode?: string | null
   aps: AdminPresenceAccessPoint[]
+  classroomNetworks: ClassroomNetwork[]
+  deviceOptions: AdminPresenceDeviceOption[]
 }
 
 export type AdminPresenceOverlayRequest = {
   stations: Array<{
     macAddress: string
     apId?: string | null
-    present: boolean
     associated?: boolean | null
     authorized?: boolean | null
     authenticated?: boolean | null
@@ -118,6 +120,14 @@ export type AdminPresenceOverlayRequest = {
     rxBytes?: number | null
     txBytes?: number | null
   }>
+}
+
+export type AdminPresenceDeviceOption = {
+  studentLoginId?: string | null
+  studentName?: string | null
+  deviceLabel?: string | null
+  macAddress: string
+  observed: boolean
 }
 
 type ApiSuccessEnvelope<T> = {
@@ -222,6 +232,11 @@ export const api = {
   resetAdminPresenceOverlay: (classroomCode: string) =>
     request<AdminPresenceSnapshot>(`/api/admin/presence/classrooms/${classroomCode}/dummy-controls/reset`, {
       method: 'POST',
+    }),
+  updateClassroomNetworkThreshold: (networkId: number, payload: { signal_threshold_dbm: number | null }) =>
+    request<ClassroomNetwork>(`/api/admin/classroom-networks/${networkId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
     }),
 }
 
