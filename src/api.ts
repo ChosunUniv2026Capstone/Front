@@ -128,6 +128,157 @@ export type AdminPresenceDeviceOption = {
   observed: boolean
 }
 
+export type AttendanceSlotAggregate = {
+  present: number
+  late: number
+  absent: number
+  official: number
+  sick: number
+}
+
+export type AttendanceSlot = {
+  projection_key: string
+  course_code: string
+  classroom_code: string
+  session_date: string
+  slot_start_at: string
+  slot_end_at: string
+  week_index: number
+  lesson_index_within_week: number
+  period_label: string
+  display_label: string
+  professor_name: string
+  professor_login_id: string
+  slot_state: 'unchecked' | 'offline' | 'online' | 'canceled'
+  session_id?: number | null
+  session_mode?: 'manual' | 'smart' | 'canceled' | null
+  session_status?: 'active' | 'closed' | 'expired' | 'canceled' | null
+  expires_at?: string | null
+  aggregate: AttendanceSlotAggregate
+}
+
+export type AttendanceWeek = {
+  week_index: number
+  week_start: string
+  week_end: string
+  slots: AttendanceSlot[]
+}
+
+export type AttendanceReportSummary = {
+  projection_slot_count: number
+  active_session_count: number
+  smart_active_count: number
+  canceled_count: number
+  present: number
+  late: number
+  absent: number
+  official: number
+  sick: number
+}
+
+export type AttendanceTimeline = {
+  course_code: string
+  course_title: string
+  semester_start: string
+  semester_end: string
+  weeks: AttendanceWeek[]
+  report_summary: AttendanceReportSummary
+}
+
+export type AttendanceBatchResult = {
+  projection_key: string
+  success: boolean
+  code: string
+  message: string
+  session_id?: number | null
+  resulting_slot_state: 'unchecked' | 'offline' | 'online' | 'canceled'
+  event_type?: string
+  expires_at?: string | null
+}
+
+export type AttendanceBatchResponse = {
+  course_code: string
+  mode: 'manual' | 'smart' | 'canceled'
+  results: AttendanceBatchResult[]
+  changed_projection_keys: string[]
+  changed_session_ids: number[]
+  occurred_at: string
+}
+
+export type AttendanceRosterStudent = {
+  student_id: string
+  student_name: string
+  final_status?: 'present' | 'absent' | 'late' | 'official' | 'sick' | null
+  attendance_reason?: string | null
+  history_count: number
+}
+
+export type AttendanceSessionRoster = {
+  session: {
+    session_id?: number | null
+    projection_key: string
+    mode?: 'manual' | 'smart' | 'canceled' | null
+    status: 'active' | 'closed' | 'expired' | 'canceled' | 'unchecked'
+    expires_at?: string | null
+    version: number
+    course_code: string
+  }
+  students: AttendanceRosterStudent[]
+  aggregate: AttendanceSlotAggregate
+}
+
+export type AttendanceHistoryEntry = {
+  audit_id: number
+  projection_key: string
+  change_source: string
+  previous_status?: string | null
+  new_status?: string | null
+  reason?: string | null
+  changed_at: string
+  version: number
+  actor_name: string
+  actor_role: string
+  actor_login_id: string
+}
+
+export type AttendanceHistory = {
+  student_id: string
+  student_name: string
+  course_code: string
+  entries: AttendanceHistoryEntry[]
+}
+
+export type StudentAttendanceSession = {
+  session_id: number
+  projection_key: string
+  display_label: string
+  session_date: string
+  slot_start_at: string
+  slot_end_at: string
+  expires_at?: string | null
+  can_check_in: boolean
+  eligibility: EligibilityResponse
+  version: number
+}
+
+export type StudentActiveAttendanceSessions = {
+  course_code: string
+  student_id: string
+  sessions: StudentAttendanceSession[]
+}
+
+export type AttendanceCheckInResult = {
+  code: string
+  session_id: number
+  projection_key: string
+  student_id: string
+  status: string
+  version: number
+  occurred_at: string
+  course_code: string
+  idempotent: boolean
+}
+
 type ApiSuccessEnvelope<T> = {
   success: true
   data: T
@@ -146,13 +297,56 @@ type ApiErrorEnvelope = {
 
 const API_BASE = (import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '')
 let accessToken: string | null = null
+const accessTokenListeners = new Set<(token: string | null) => void>()
+let authFailureHandler: (() => void) | null = null
+let refreshPromise: Promise<LoginResponse> | null = null
+
+type RequestOptions = {
+  allowSessionRefresh?: boolean
+  suppressAuthFailureHandler?: boolean
+}
+
+class ApiRequestError extends Error {
+  status: number
+  code?: string
+
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+    this.code = code
+  }
+}
+
+function emitAccessToken(token: string | null) {
+  accessTokenListeners.forEach((listener) => listener(token))
+}
 
 export function setAccessToken(token: string | null) {
   accessToken = token
+  emitAccessToken(token)
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export function getAccessToken() {
+  return accessToken
+}
+
+export function subscribeAccessToken(listener: (token: string | null) => void) {
+  accessTokenListeners.add(listener)
+  return () => accessTokenListeners.delete(listener)
+}
+
+export function setAuthFailureHandler(handler: (() => void) | null) {
+  authFailureHandler = handler
+}
+
+function shouldTrySessionRefresh(path: string) {
+  return !['/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/bootstrap', '/api/auth/me'].includes(path)
+}
+
+async function requestInternal<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -161,16 +355,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
 
+  if (response.status === 401 && options.allowSessionRefresh !== false && shouldTrySessionRefresh(path)) {
+    try {
+      await refreshAccessToken()
+      return requestInternal<T>(path, init, {
+        ...options,
+        allowSessionRefresh: false,
+      })
+    } catch {
+      // fall through to envelope parsing + auth failure handling below
+    }
+  }
+
   const contentType = response.headers.get('content-type') ?? ''
   const payload = contentType.includes('application/json') ? await response.json() : await response.text()
 
+  if (response.ok && (response.status === 204 || payload === '')) {
+    return undefined as T
+  }
+
   if (!response.ok) {
     const envelope = payload as ApiErrorEnvelope | undefined
+    const code = envelope?.error?.code
     const message =
       typeof payload === 'string'
         ? payload
         : envelope?.error?.message ?? payload?.detail ?? payload?.message ?? 'Request failed'
-    throw new Error(message)
+    if (response.status === 401 && !options.suppressAuthFailureHandler) {
+      setAccessToken(null)
+      authFailureHandler?.()
+    }
+    throw new ApiRequestError(message, response.status, code)
   }
 
   const successEnvelope = payload as ApiSuccessEnvelope<T> | undefined
@@ -186,12 +401,55 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T
 }
 
+async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestInternal<T>(path, init, {
+    allowSessionRefresh: false,
+    suppressAuthFailureHandler: true,
+  })
+}
+
+async function refreshAccessToken() {
+  if (!refreshPromise) {
+    refreshPromise = authRequest<LoginResponse>('/api/auth/refresh', {
+      method: 'POST',
+    })
+      .then((session) => {
+        setAccessToken(session.access_token)
+        return session
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+
+  return refreshPromise
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestInternal<T>(path, init)
+}
+
 export const api = {
   health: () => request<{ status?: string }>('/health'),
   login: (payload: { login_id: string; password: string }) =>
-    request<LoginResponse>('/api/auth/login', {
+    authRequest<LoginResponse>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  bootstrapSession: async () => {
+    try {
+      return await authRequest<LoginResponse>('/api/auth/bootstrap')
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        return authRequest<LoginResponse>('/api/auth/me')
+      }
+      throw error
+    }
+  },
+  refreshSession: () => refreshAccessToken(),
+  logout: () =>
+    authRequest<{ success?: boolean } | void>('/api/auth/logout', {
+      method: 'POST',
     }),
   listStudentCourses: (studentId: string) => request<Course[]>(`/api/students/${studentId}/courses`),
   listProfessorCourses: (professorId: string) => request<Course[]>(`/api/professors/${professorId}/courses`),
@@ -235,6 +493,57 @@ export const api = {
     request<ClassroomNetwork>(`/api/admin/classroom-networks/${networkId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+    }),
+  getProfessorAttendanceTimeline: (professorId: string, courseCode: string) =>
+    request<AttendanceTimeline>(`/api/professors/${professorId}/courses/${courseCode}/attendance/timeline`),
+  applyProfessorAttendanceBatch: (
+    professorId: string,
+    courseCode: string,
+    payload: { projection_keys: string[]; mode: 'manual' | 'smart' | 'canceled' },
+  ) =>
+    request<AttendanceBatchResponse>(`/api/professors/${professorId}/courses/${courseCode}/attendance/sessions/batch`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  closeProfessorAttendanceSession: (professorId: string, sessionId: number) =>
+    request<{ session_id: number; projection_key: string; status: string; version: number; occurred_at: string; course_code: string }>(
+      `/api/professors/${professorId}/attendance/sessions/${sessionId}/close`,
+      {
+        method: 'POST',
+      },
+    ),
+  getProfessorAttendanceRoster: (professorId: string, sessionId: number) =>
+    request<AttendanceSessionRoster>(`/api/professors/${professorId}/attendance/sessions/${sessionId}/roster`),
+  getProfessorAttendanceSlotRoster: (professorId: string, courseCode: string, projectionKey: string) =>
+    request<AttendanceSessionRoster>(
+      `/api/professors/${professorId}/courses/${courseCode}/attendance/slot-roster?projection_key=${encodeURIComponent(projectionKey)}`,
+    ),
+  updateProfessorAttendanceRecord: (
+    professorId: string,
+    sessionId: number,
+    studentId: string,
+    payload: { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string },
+  ) =>
+    request<{
+      session_id: number
+      projection_key: string
+      student_id: string
+      new_status: string
+      reason: string
+      version: number
+      course_code: string
+      occurred_at: string
+    }>(`/api/professors/${professorId}/attendance/sessions/${sessionId}/students/${studentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  getProfessorAttendanceHistory: (professorId: string, courseCode: string, studentId: string) =>
+    request<AttendanceHistory>(`/api/professors/${professorId}/courses/${courseCode}/attendance/students/${studentId}/history`),
+  listStudentActiveAttendanceSessions: (studentId: string, courseCode: string) =>
+    request<StudentActiveAttendanceSessions>(`/api/students/${studentId}/courses/${courseCode}/attendance/active-sessions`),
+  studentAttendanceCheckIn: (studentId: string, sessionId: number) =>
+    request<AttendanceCheckInResult>(`/api/students/${studentId}/attendance/sessions/${sessionId}/check-in`, {
+      method: 'POST',
     }),
 }
 

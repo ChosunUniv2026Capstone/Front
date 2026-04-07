@@ -1,12 +1,19 @@
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
+  type AttendanceHistory,
+  type AttendanceSlot,
+  type AttendanceTimeline,
+  type AttendanceSessionRoster,
   type AdminPresenceOverlayRequest,
   type AdminPresenceSnapshot,
   type AdminPresenceStation,
   api,
   formatJson,
+  getAccessToken,
+  setAuthFailureHandler,
   setAccessToken,
+  subscribeAccessToken,
   type Classroom,
   type ClassroomNetwork,
   type Course,
@@ -16,9 +23,15 @@ import {
   type Notice,
   type UserSummary,
 } from './api'
+import {
+  buildAppPath,
+  parseAppRoute,
+  type AppRoute,
+  type AttendancePage,
+  type CourseSection,
+} from './router'
 
 type AppView = 'dashboard' | 'profile' | 'course' | 'notice'
-type CourseSection = 'overview' | 'content' | 'notices' | 'attendance' | 'manage'
 type AdminTab = 'users' | 'networks' | 'demo'
 
 type LearningItem = {
@@ -157,16 +170,31 @@ function SectionCard({
   )
 }
 
+function defaultRouteForUser(user: LoginUser | null): AppRoute {
+  return user ? { kind: 'dashboard' } : { kind: 'login' }
+}
+
+function safeAttendanceRoute(courseCode: string, attendancePage: AttendancePage, projectionKey: string): AppRoute {
+  return {
+    kind: 'course',
+    courseCode,
+    section: 'attendance',
+    attendancePage,
+    projectionKey,
+  }
+}
+
 function App() {
   const [loginId, setLoginId] = useState('')
   const [password, setPassword] = useState('')
   const [currentUser, setCurrentUser] = useState<LoginUser | null>(null)
-  const [view, setView] = useState<AppView>('dashboard')
-  const [courseSection, setCourseSection] = useState<CourseSection>('overview')
+  const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname))
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null)
   const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null)
-  const [noticeReturnView, setNoticeReturnView] = useState<AppView>('dashboard')
+  const [noticeReturnRoute, setNoticeReturnRoute] = useState<AppRoute>({ kind: 'dashboard' })
   const [adminTab, setAdminTab] = useState<AdminTab>('users')
+  const [authReady, setAuthReady] = useState(false)
+  const [accessTokenState, setAccessTokenState] = useState<string | null>(() => getAccessToken())
 
   const [studentId, setStudentId] = useState('20201234')
   const [label, setLabel] = useState('')
@@ -191,6 +219,22 @@ function App() {
   const [adminClassrooms, setAdminClassrooms] = useState<Classroom[]>([])
   const [adminNetworks, setAdminNetworks] = useState<ClassroomNetwork[]>([])
   const [adminPresenceSnapshots, setAdminPresenceSnapshots] = useState<Record<string, AdminPresenceSnapshot>>({})
+  const [attendanceTimeline, setAttendanceTimeline] = useState<AttendanceTimeline | null>(null)
+  const [attendanceRoster, setAttendanceRoster] = useState<AttendanceSessionRoster | null>(null)
+  const [attendanceHistory, setAttendanceHistory] = useState<AttendanceHistory | null>(null)
+  const [studentAttendanceSessions, setStudentAttendanceSessions] = useState<
+    Awaited<ReturnType<typeof api.listStudentActiveAttendanceSessions>>['sessions']
+  >([])
+  const [attendanceLoading, setAttendanceLoading] = useState(false)
+  const [attendanceMessage, setAttendanceMessage] = useState<string | null>(null)
+  const [attendanceModalOpen, setAttendanceModalOpen] = useState(false)
+  const [attendanceModalAnchorSlot, setAttendanceModalAnchorSlot] = useState<AttendanceSlot | null>(null)
+  const [selectedAttendanceMode, setSelectedAttendanceMode] = useState<'manual' | 'smart' | 'canceled'>('manual')
+  const [selectedBatchProjectionKeys, setSelectedBatchProjectionKeys] = useState<string[]>([])
+  const [attendanceNow, setAttendanceNow] = useState(Date.now())
+  const [rosterDrafts, setRosterDrafts] = useState<
+    Record<string, { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string }>
+  >({})
   const [presenceControlClassroom, setPresenceControlClassroom] = useState('B101')
   const [presenceControlDeviceMac, setPresenceControlDeviceMac] = useState(DEMO_DEVICE_MAC)
   const [presenceControlApId, setPresenceControlApId] = useState('phy3-ap0')
@@ -201,6 +245,14 @@ function App() {
   const [health, setHealth] = useState<'checking' | 'online' | 'offline'>('checking')
   const [isPending, startTransition] = useTransition()
 
+  const view: AppView =
+    route.kind === 'profile' ? 'profile' : route.kind === 'notice' ? 'notice' : route.kind === 'course' ? 'course' : 'dashboard'
+  const courseSection: CourseSection = route.kind === 'course' ? route.section : 'overview'
+  const routeAttendancePage: AttendancePage = route.kind === 'course' && route.section === 'attendance'
+    ? route.attendancePage ?? 'timeline'
+    : 'timeline'
+  const routeProjectionKey = route.kind === 'course' && route.section === 'attendance' ? route.projectionKey ?? null : null
+
   const isStudent = currentUser?.role === 'student'
   const isProfessor = currentUser?.role === 'professor'
   const isAdmin = currentUser?.role === 'admin'
@@ -209,6 +261,10 @@ function App() {
     () =>
       selectedAdminSnapshot?.classroomNetworks.find((network) => network.ap_id === presenceControlApId) ?? null,
     [presenceControlApId, selectedAdminSnapshot],
+  )
+  const selectedAttendanceSlot = useMemo(
+    () => findAttendanceSlot(attendanceTimeline, routeProjectionKey),
+    [attendanceTimeline, routeProjectionKey],
   )
 
   useEffect(() => {
@@ -228,7 +284,46 @@ function App() {
     }
   }, [])
 
-  async function refreshDevices(nextStudentId: string) {
+  const navigate = useCallback((nextRoute: AppRoute, options?: { replace?: boolean }) => {
+    const nextPath = buildAppPath(nextRoute)
+    if (options?.replace) {
+      window.history.replaceState(null, '', nextPath)
+    } else if (window.location.pathname !== nextPath) {
+      window.history.pushState(null, '', nextPath)
+    }
+    setRoute(nextRoute)
+  }, [])
+
+  const navigateToDefault = useCallback((user: LoginUser | null, options?: { replace?: boolean }) => {
+    navigate(defaultRouteForUser(user), options)
+  }, [navigate])
+
+  useEffect(() => {
+    const handlePopState = () => setRoute(parseAppRoute(window.location.pathname))
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = subscribeAccessToken(setAccessTokenState)
+    return () => {
+      unsubscribe()
+    }
+  }, [])
+
+  const handleSessionExpired = useCallback(() => {
+    setCurrentUser(null)
+    resetRoleData()
+    setError('세션이 만료되어 다시 로그인해야 합니다.')
+    navigate({ kind: 'login' }, { replace: true })
+  }, [navigate])
+
+  useEffect(() => {
+    setAuthFailureHandler(handleSessionExpired)
+    return () => setAuthFailureHandler(null)
+  }, [handleSessionExpired])
+
+  const refreshDevices = useCallback(async (nextStudentId: string) => {
     try {
       setError(null)
       const nextDevices = await api.listDevices(nextStudentId)
@@ -238,9 +333,9 @@ function App() {
         caughtError instanceof Error ? caughtError.message : '등록 단말 목록을 불러오지 못했습니다.',
       )
     }
-  }
+  }, [])
 
-  async function hydrateStudent(studentLoginId: string) {
+  const hydrateStudent = useCallback(async (studentLoginId: string) => {
     setStudentId(studentLoginId)
     const [nextCourses, nextNotices] = await Promise.all([
       api.listStudentCourses(studentLoginId),
@@ -251,9 +346,9 @@ function App() {
     setNotices(nextNotices)
     setLearningItems(createLearningSeed(nextCourses))
     setSelectedLearningItem(null)
-  }
+  }, [refreshDevices])
 
-  async function hydrateProfessor(professorLoginId: string, professorName?: string) {
+  const hydrateProfessor = useCallback(async (professorLoginId: string, professorName?: string) => {
     const [nextCourses, nextNotices] = await Promise.all([
       api.listProfessorCourses(professorLoginId),
       api.listNotices(professorLoginId),
@@ -262,9 +357,9 @@ function App() {
     setNotices(nextNotices)
     setLearningItems(createLearningSeed(nextCourses, professorName))
     setSelectedLearningItem(null)
-  }
+  }, [])
 
-  async function hydrateAdmin() {
+  const hydrateAdmin = useCallback(async () => {
     const [users, classrooms, networks] = await Promise.all([
       api.listUsers(),
       api.listClassrooms(),
@@ -307,7 +402,51 @@ function App() {
         setPresenceControlSignalDbm(initialStation.signalDbm ?? -47)
       }
     }
-  }
+  }, [presenceControlClassroom])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function bootstrapSession() {
+      try {
+        const restored = await api.bootstrapSession()
+        if (cancelled) return
+        setAccessToken(restored.access_token)
+        setCurrentUser(restored.user)
+        resetRoleData()
+
+        if (restored.user.role === 'student') {
+          await hydrateStudent(restored.user.login_id)
+        } else if (restored.user.role === 'professor') {
+          await hydrateProfessor(restored.user.login_id, restored.user.name)
+        } else {
+          await hydrateAdmin()
+        }
+
+        if (parseAppRoute(window.location.pathname).kind === 'login') {
+          navigateToDefault(restored.user, { replace: true })
+        }
+      } catch {
+        if (cancelled) return
+        setAccessToken(null)
+        setCurrentUser(null)
+        resetRoleData()
+        if (parseAppRoute(window.location.pathname).kind !== 'login') {
+          navigate({ kind: 'login' }, { replace: true })
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthReady(true)
+        }
+      }
+    }
+
+    void bootstrapSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [hydrateAdmin, hydrateProfessor, hydrateStudent, navigate, navigateToDefault])
 
   async function refreshAdminPresenceSnapshot(classroomCode: string) {
     const snapshot = await api.getAdminPresenceSnapshot(classroomCode)
@@ -383,8 +522,16 @@ function App() {
     setSelectedLearningItem(null)
     setSelectedCourse(null)
     setSelectedNotice(null)
-    setNoticeReturnView('dashboard')
-    setCourseSection('overview')
+    setNoticeReturnRoute({ kind: 'dashboard' })
+    setAttendanceTimeline(null)
+    setAttendanceRoster(null)
+    setAttendanceHistory(null)
+    setStudentAttendanceSessions([])
+    setAttendanceModalOpen(false)
+    setAttendanceModalAnchorSlot(null)
+    setSelectedBatchProjectionKeys([])
+    setAttendanceMessage(null)
+    setRosterDrafts({})
   }
 
   async function handleLogin(event: FormEvent) {
@@ -404,7 +551,7 @@ function App() {
         await hydrateAdmin()
       }
 
-      setView('dashboard')
+      navigateToDefault(result.user, { replace: true })
     } catch (caughtError) {
       setAccessToken(null)
       setCurrentUser(null)
@@ -413,12 +560,18 @@ function App() {
     }
   }
 
-  function handleLogout() {
-    setAccessToken(null)
-    setCurrentUser(null)
-    resetRoleData()
-    setError(null)
-    setView('dashboard')
+  async function handleLogout() {
+    try {
+      await api.logout()
+    } catch {
+      // ignore logout cleanup failures and continue local sign-out
+    } finally {
+      setAccessToken(null)
+      setCurrentUser(null)
+      resetRoleData()
+      setError(null)
+      navigate({ kind: 'login' }, { replace: true })
+    }
   }
 
   async function handleRegisterDevice(event: FormEvent) {
@@ -486,11 +639,275 @@ function App() {
   function openCourse(course: Course) {
     setSelectedCourse(course)
     setEligibility(null)
-    setCourseSection('overview')
+    setAttendanceTimeline(null)
+    setAttendanceRoster(null)
+    setAttendanceHistory(null)
+    setStudentAttendanceSessions([])
+    setAttendanceModalOpen(false)
+    setAttendanceModalAnchorSlot(null)
+    setSelectedBatchProjectionKeys([])
+    setAttendanceMessage(null)
     setSelectedLearningItem(null)
     setLearningFilter('all')
-    setView('course')
+    navigate({
+      kind: 'course',
+      courseCode: course.course_code,
+      section: 'overview',
+    })
   }
+
+  function findAttendanceSlot(nextTimeline: AttendanceTimeline | null, projectionKey: string | null) {
+    if (!nextTimeline || !projectionKey) return null
+    for (const week of nextTimeline.weeks) {
+      const slot = week.slots.find((item) => item.projection_key === projectionKey)
+      if (slot) return slot
+    }
+    return null
+  }
+
+  const refreshProfessorAttendance = useCallback(async (nextCourseCode = selectedCourse?.course_code) => {
+    if (!currentUser || currentUser.role !== 'professor' || !nextCourseCode) return
+    setAttendanceLoading(true)
+    try {
+      const nextTimeline = await api.getProfessorAttendanceTimeline(currentUser.login_id, nextCourseCode)
+      setAttendanceTimeline(nextTimeline)
+      if (routeAttendancePage === 'timeline') {
+        setAttendanceRoster(null)
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '출석 타임라인을 불러오지 못했습니다.')
+    } finally {
+      setAttendanceLoading(false)
+    }
+  }, [currentUser, routeAttendancePage, selectedCourse?.course_code])
+
+  const refreshStudentAttendance = useCallback(async (nextCourseCode = selectedCourse?.course_code) => {
+    if (!currentUser || currentUser.role !== 'student' || !nextCourseCode) return
+    setAttendanceLoading(true)
+    try {
+      const nextSessions = await api.listStudentActiveAttendanceSessions(currentUser.login_id, nextCourseCode)
+      setStudentAttendanceSessions(nextSessions.sessions)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '학생 출석 세션을 불러오지 못했습니다.')
+    } finally {
+      setAttendanceLoading(false)
+    }
+  }, [currentUser, selectedCourse?.course_code])
+
+  const loadAttendanceRoster = useCallback(async (sessionId: number) => {
+    if (!currentUser || currentUser.role !== 'professor') return
+    try {
+      const nextRoster = await api.getProfessorAttendanceRoster(currentUser.login_id, sessionId)
+      setAttendanceRoster(nextRoster)
+      setRosterDrafts((current) => {
+        const nextDrafts = { ...current }
+        nextRoster.students.forEach((student) => {
+          nextDrafts[student.student_id] = {
+            status: (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent',
+            reason: student.attendance_reason ?? '',
+          }
+        })
+        return nextDrafts
+      })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '출석 명단을 불러오지 못했습니다.')
+    }
+  }, [currentUser])
+
+  const loadAttendanceSlotRoster = useCallback(async (projectionKey: string) => {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    try {
+      const nextRoster = await api.getProfessorAttendanceSlotRoster(currentUser.login_id, selectedCourse.course_code, projectionKey)
+      setAttendanceRoster(nextRoster)
+      setRosterDrafts((current) => {
+        const nextDrafts = { ...current }
+        nextRoster.students.forEach((student) => {
+          nextDrafts[student.student_id] = {
+            status: (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent',
+            reason: student.attendance_reason ?? '',
+          }
+        })
+        return nextDrafts
+      })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '차시 출석 명단을 불러오지 못했습니다.')
+    }
+  }, [currentUser, selectedCourse])
+
+  async function loadAttendanceHistory(studentIdValue: string) {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    try {
+      const nextHistory = await api.getProfessorAttendanceHistory(currentUser.login_id, selectedCourse.course_code, studentIdValue)
+      setAttendanceHistory(nextHistory)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '출석 이력을 불러오지 못했습니다.')
+    }
+  }
+
+  async function applyAttendanceBatch() {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse || selectedBatchProjectionKeys.length === 0) {
+      return
+    }
+    try {
+      setAttendanceMessage(null)
+      const result = await api.applyProfessorAttendanceBatch(currentUser.login_id, selectedCourse.course_code, {
+        projection_keys: selectedBatchProjectionKeys,
+        mode: selectedAttendanceMode,
+      })
+      const summary = result.results.map((item) => `${item.projection_key.split(':')[2]} ${item.code}`).join(', ')
+      setAttendanceMessage(`출석 작업을 반영했습니다. ${summary}`)
+      setSelectedBatchProjectionKeys([])
+      setAttendanceModalOpen(false)
+      setAttendanceModalAnchorSlot(null)
+      await refreshProfessorAttendance(selectedCourse.course_code)
+      const primaryProjectionKey = attendanceModalAnchorSlot?.projection_key ?? result.changed_projection_keys[0]
+      if (primaryProjectionKey) {
+        if (selectedAttendanceMode === 'smart') {
+          navigate(safeAttendanceRoute(selectedCourse.course_code, 'timer', primaryProjectionKey))
+        } else if (selectedAttendanceMode === 'manual') {
+          navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', primaryProjectionKey))
+        } else {
+          navigate({
+            kind: 'course',
+            courseCode: selectedCourse.course_code,
+            section: 'attendance',
+            attendancePage: 'timeline',
+          })
+        }
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '출석 세션을 적용하지 못했습니다.')
+    }
+  }
+
+  async function closeAttendanceSession(sessionId: number) {
+    if (!currentUser || currentUser.role !== 'professor') return
+    try {
+      await api.closeProfessorAttendanceSession(currentUser.login_id, sessionId)
+      setAttendanceMessage('선택한 출석 세션을 종료했습니다.')
+      await refreshProfessorAttendance()
+      if (selectedCourse && selectedAttendanceSlot) {
+        navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', selectedAttendanceSlot.projection_key), { replace: true })
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '출석 세션을 종료하지 못했습니다.')
+    }
+  }
+
+  function handleAttendanceRowClick(slot: AttendanceSlot) {
+    setAttendanceHistory(null)
+    navigate(safeAttendanceRoute(slot.course_code, 'roster', slot.projection_key))
+  }
+
+  function openAttendanceModal(slot: AttendanceSlot) {
+    setAttendanceModalAnchorSlot(slot)
+    setAttendanceModalOpen(true)
+    setSelectedAttendanceMode(slot.slot_state === 'canceled' ? 'manual' : slot.session_mode === 'smart' ? 'smart' : 'manual')
+    const sameDateSlots =
+      attendanceTimeline?.weeks
+        .flatMap((week) => week.slots)
+        .filter((item) => item.session_date === slot.session_date)
+        .map((item) => item.projection_key) ?? []
+    setSelectedBatchProjectionKeys(sameDateSlots.includes(slot.projection_key) ? [slot.projection_key] : [])
+  }
+
+  function updateRosterDraft(studentIdValue: string, nextValue: Partial<{ status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string }>) {
+    setRosterDrafts((current) => ({
+      ...current,
+      [studentIdValue]: {
+        status: current[studentIdValue]?.status ?? 'absent',
+        reason: current[studentIdValue]?.reason ?? '',
+        ...nextValue,
+      },
+    }))
+  }
+
+  function toggleModalProjectionKey(projectionKey: string) {
+    setSelectedBatchProjectionKeys((current) =>
+      current.includes(projectionKey) ? current.filter((value) => value !== projectionKey) : [...current, projectionKey],
+    )
+  }
+
+  async function submitRosterUpdate(studentIdValue: string) {
+    if (!currentUser || currentUser.role !== 'professor' || !attendanceRoster) return
+    if (!attendanceRoster.session.session_id) return
+    const draft = rosterDrafts[studentIdValue]
+    if (!draft) return
+    try {
+      await api.updateProfessorAttendanceRecord(currentUser.login_id, attendanceRoster.session.session_id, studentIdValue, {
+        status: draft.status,
+        reason: draft.reason,
+      })
+      setAttendanceMessage('학생 출석 상태를 저장했습니다.')
+      await loadAttendanceRoster(attendanceRoster.session.session_id)
+      await refreshProfessorAttendance()
+      await loadAttendanceHistory(studentIdValue)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '학생 출석 상태를 저장하지 못했습니다.')
+    }
+  }
+
+  async function handleStudentCheckIn(sessionId: number) {
+    if (!currentUser || currentUser.role !== 'student') return
+    try {
+      const result = await api.studentAttendanceCheckIn(currentUser.login_id, sessionId)
+      setAttendanceMessage(result.idempotent ? '이미 출석 처리된 세션입니다.' : '스마트 출석이 반영되었습니다.')
+      await refreshStudentAttendance()
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '스마트 출석에 실패했습니다.')
+    }
+  }
+
+  useEffect(() => {
+    if (courseSection !== 'attendance' || !selectedCourse || !currentUser) return
+    if (currentUser.role === 'professor') {
+      void refreshProfessorAttendance(selectedCourse.course_code)
+    }
+    if (currentUser.role === 'student') {
+      void refreshStudentAttendance(selectedCourse.course_code)
+    }
+  }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
+
+  useEffect(() => {
+    if (courseSection !== 'attendance') return
+    const timer = window.setInterval(() => setAttendanceNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [courseSection])
+
+  useEffect(() => {
+    if (courseSection !== 'attendance' || !selectedCourse || !currentUser) return
+    if (!accessTokenState) return
+    const baseUrl = (import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+    const socketUrl = `${baseUrl.replace(/^http/, 'ws')}/ws/attendance?token=${encodeURIComponent(accessTokenState)}&courseCode=${encodeURIComponent(selectedCourse.course_code)}&view=${encodeURIComponent(currentUser.role === 'student' ? 'student' : 'professor')}`
+    const socket = new WebSocket(socketUrl)
+    socket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { event_type?: string; changed_payload?: { data?: AttendanceTimeline | { sessions?: typeof studentAttendanceSessions } } }
+        if (payload.event_type === 'attendance.bootstrap') {
+          if (currentUser.role === 'student') {
+            const nextData = payload.changed_payload?.data as { sessions?: typeof studentAttendanceSessions } | undefined
+            setStudentAttendanceSessions(nextData?.sessions ?? [])
+          } else {
+            const nextData = payload.changed_payload?.data as AttendanceTimeline | undefined
+            if (nextData) setAttendanceTimeline(nextData)
+          }
+          return
+        }
+        if (currentUser.role === 'student') {
+          void refreshStudentAttendance(selectedCourse.course_code)
+        } else {
+          void refreshProfessorAttendance(selectedCourse.course_code)
+        }
+      } catch {
+        if (currentUser.role === 'student') {
+          void refreshStudentAttendance(selectedCourse.course_code)
+        } else {
+          void refreshProfessorAttendance(selectedCourse.course_code)
+        }
+      }
+    }
+    return () => socket.close()
+  }, [accessTokenState, courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
 
   function handleAddLearningItem(event: FormEvent) {
     event.preventDefault()
@@ -534,15 +951,160 @@ function App() {
 
     try {
       setError(null)
-      setNoticeReturnView(fromView)
+      setNoticeReturnRoute(
+        fromView === 'course' && selectedCourse
+          ? { kind: 'course', courseCode: selectedCourse.course_code, section: courseSection }
+          : { kind: 'dashboard' },
+      )
       setSelectedNotice(notice)
-      setView('notice')
+      navigate({ kind: 'notice', noticeId: notice.id })
       const detail = await api.getNoticeDetail(currentUser.login_id, notice.id)
       setSelectedNotice(detail)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '공지 상세를 불러오지 못했습니다.')
     }
   }
+
+  useEffect(() => {
+    if (!currentUser) return
+
+    if (route.kind === 'notice') {
+      let cancelled = false
+      void (async () => {
+        try {
+          const detail = await api.getNoticeDetail(currentUser.login_id, route.noticeId)
+          if (!cancelled) {
+            setSelectedNotice(detail)
+          }
+        } catch (caughtError) {
+          if (!cancelled) {
+            setError(caughtError instanceof Error ? caughtError.message : '공지 상세를 불러오지 못했습니다.')
+            navigateToDefault(currentUser, { replace: true })
+          }
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }
+
+    setSelectedNotice(null)
+    return undefined
+  }, [currentUser, navigateToDefault, route])
+
+  useEffect(() => {
+    if (!currentUser) return
+
+    if (route.kind !== 'course') {
+      setAttendanceHistory(null)
+      if (route.kind !== 'notice') {
+        setSelectedCourse(null)
+      }
+      return
+    }
+
+    if (courses.length === 0) {
+      return
+    }
+
+    const nextCourse = courses.find((course) => course.course_code === route.courseCode)
+    if (!nextCourse) {
+      setError('해당 강의 경로에 접근할 수 없습니다.')
+      navigateToDefault(currentUser, { replace: true })
+      return
+    }
+
+    if (selectedCourse?.course_code !== nextCourse.course_code) {
+      setEligibility(null)
+      setAttendanceTimeline(null)
+      setAttendanceRoster(null)
+      setAttendanceHistory(null)
+      setStudentAttendanceSessions([])
+      setAttendanceModalOpen(false)
+      setAttendanceModalAnchorSlot(null)
+      setSelectedBatchProjectionKeys([])
+      setAttendanceMessage(null)
+      setSelectedLearningItem(null)
+      setLearningFilter('all')
+      setSelectedCourse(nextCourse)
+    }
+
+    if (route.section === 'manage' && currentUser.role !== 'professor') {
+      setError('해당 강의 운영 페이지는 교수만 접근할 수 있습니다.')
+      navigate({
+        kind: 'course',
+        courseCode: nextCourse.course_code,
+        section: 'overview',
+      }, { replace: true })
+      return
+    }
+
+    if (route.section === 'attendance' && currentUser.role === 'admin') {
+      setError('관리자 계정에서는 강의 출석 페이지에 직접 접근할 수 없습니다.')
+      navigate({
+        kind: 'course',
+        courseCode: nextCourse.course_code,
+        section: 'overview',
+      }, { replace: true })
+    }
+  }, [courses, currentUser, navigate, navigateToDefault, route, selectedCourse?.course_code])
+
+  useEffect(() => {
+    if (!selectedCourse || route.kind !== 'course' || route.section !== 'attendance' || !currentUser) {
+      return
+    }
+
+    if (currentUser.role !== 'professor') {
+      return
+    }
+
+    if (!routeProjectionKey) {
+      setAttendanceRoster(null)
+      return
+    }
+
+    const slot = findAttendanceSlot(attendanceTimeline, routeProjectionKey)
+    if (!slot) {
+      if (attendanceTimeline) {
+        setError('선택한 출석 차시를 찾지 못했습니다.')
+        navigate({
+          kind: 'course',
+          courseCode: selectedCourse.course_code,
+          section: 'attendance',
+          attendancePage: 'timeline',
+        }, { replace: true })
+      }
+      return
+    }
+
+    if (routeAttendancePage === 'timer') {
+      const expired = !slot.expires_at || new Date(slot.expires_at).getTime() <= attendanceNow
+      const inactive = slot.session_status && slot.session_status !== 'active'
+      if (!slot.session_id || expired || inactive) {
+        navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', slot.projection_key), { replace: true })
+      }
+      return
+    }
+
+    if (routeAttendancePage === 'roster') {
+      if (slot.session_id) {
+        void loadAttendanceRoster(slot.session_id)
+      } else {
+        void loadAttendanceSlotRoster(slot.projection_key)
+      }
+    }
+  }, [
+    attendanceNow,
+    attendanceTimeline,
+    currentUser,
+    loadAttendanceRoster,
+    loadAttendanceSlotRoster,
+    navigate,
+    route,
+    routeAttendancePage,
+    routeProjectionKey,
+    selectedCourse,
+  ])
 
   const courseNotices = useMemo(() => {
     if (!selectedCourse) return []
@@ -602,7 +1164,7 @@ function App() {
     }
 
     if (isProfessor) {
-      return [...commonItems, { id: 'manage', label: '강의 운영' }]
+      return [...commonItems, { id: 'attendance', label: '출석 탭' }, { id: 'manage', label: '강의 운영' }]
     }
 
     return commonItems
@@ -717,17 +1279,17 @@ function App() {
         </div>
 
         <nav id="main-nav" className="main-nav" aria-label="주요 메뉴">
-          <button type="button" className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>
+          <button type="button" className={view === 'dashboard' ? 'active' : ''} onClick={() => navigate({ kind: 'dashboard' })}>
             대시보드
           </button>
-          <button type="button" className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')}>
+          <button type="button" className={view === 'profile' ? 'active' : ''} onClick={() => navigate({ kind: 'profile' })}>
             내 정보
           </button>
           {selectedCourse ? (
             <button
               type="button"
               className={view === 'course' ? 'active' : ''}
-              onClick={() => setView('course')}
+              onClick={() => navigate({ kind: 'course', courseCode: selectedCourse.course_code, section: courseSection })}
             >
               강의 상세
             </button>
@@ -834,7 +1396,7 @@ function App() {
           <SectionCard
             title="공지 상세"
             action={(
-              <button type="button" className="text-button" onClick={() => setView(noticeReturnView)}>
+              <button type="button" className="text-button" onClick={() => navigate(noticeReturnRoute)}>
                 목록으로 돌아가기
               </button>
             )}
@@ -1208,16 +1770,16 @@ function App() {
 
           <SectionCard title="빠른 메뉴" compact>
             <div className="quick-actions">
-              <button type="button" onClick={() => setView('profile')}>내 정보</button>
+              <button type="button" onClick={() => navigate({ kind: 'profile' })}>내 정보</button>
               {selectedCourse ? (
-                <button type="button" onClick={() => setView('course')}>
+                <button type="button" onClick={() => navigate({ kind: 'course', courseCode: selectedCourse.course_code, section: courseSection })}>
                   강의 상세 열기
                 </button>
               ) : null}
               {isStudent ? (
-                <button type="button" onClick={() => setView('profile')}>등록 단말 관리</button>
+                <button type="button" onClick={() => navigate({ kind: 'profile' })}>등록 단말 관리</button>
               ) : (
-                <button type="button" onClick={() => (courses[0] ? openCourse(courses[0]) : setView('dashboard'))}>
+                <button type="button" onClick={() => (courses[0] ? openCourse(courses[0]) : navigate({ kind: 'dashboard' }))}>
                   공지 작성 시작
                 </button>
               )}
@@ -1620,7 +2182,7 @@ function App() {
               </div>
               <div className="helper-row">
                 <strong>추가 기능</strong>
-                <span>과제·자료·출석 집계 기능은 후속 단계에서 확장</span>
+                <span>과제·자료·출석 운영 기능을 현재 강의 흐름 안에서 함께 제공합니다.</span>
               </div>
             </div>
           </SectionCard>
@@ -1638,66 +2200,381 @@ function App() {
   }
 
   function renderCourseAttendance() {
+    function getSlotBadge(slot: AttendanceSlot) {
+      switch (slot.slot_state) {
+        case 'offline':
+          return { symbol: '✔', className: 'attendance-slot-indicator attendance-slot-indicator--offline', label: '일반출석' }
+        case 'online':
+          return { symbol: '✔', className: 'attendance-slot-indicator attendance-slot-indicator--online', label: '스마트출석' }
+        case 'canceled':
+          return { symbol: '－', className: 'attendance-slot-indicator attendance-slot-indicator--canceled', label: '휴강' }
+        default:
+          return { symbol: '✔', className: 'attendance-slot-indicator attendance-slot-indicator--unchecked', label: '미체크' }
+      }
+    }
+
+    function formatCountdown(expiresAt?: string | null) {
+      if (!expiresAt) return '시간 정보 없음'
+      const remainingMs = new Date(expiresAt).getTime() - attendanceNow
+      if (remainingMs <= 0) return '00:00'
+      const totalSeconds = Math.floor(remainingMs / 1000)
+      const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
+      const seconds = String(totalSeconds % 60).padStart(2, '0')
+      return `${minutes}:${seconds}`
+    }
+
+    const reportSummary = attendanceTimeline?.report_summary
+    const modalDateSlots =
+      attendanceTimeline?.weeks
+        .flatMap((week) => week.slots)
+        .filter((slot) => slot.session_date === attendanceModalAnchorSlot?.session_date) ?? []
+    const showProfessorTimer = isProfessor && routeAttendancePage === 'timer' && Boolean(selectedAttendanceSlot)
+    const showProfessorRoster = isProfessor && routeAttendancePage === 'roster' && Boolean(selectedAttendanceSlot)
+
     return (
       <div className="course-stack">
         {isStudent ? (
-          <SectionCard title="출석 · 시험 확인" action={<span className="caption-text">현재 강의 기준으로 확인합니다.</span>}>
-            <form className="stack" onSubmit={handleCheckEligibility}>
-              <div className="helper-list">
-                <div className="helper-row">
-                  <strong>강의 코드</strong>
-                  <span>{selectedCourse?.course_code ?? '-'}</span>
+          <>
+            <SectionCard title="출석 · 시험 확인" action={<span className="caption-text">시간과 상관없이 현재 강의 기준으로 조회할 수 있습니다.</span>}>
+              <form className="stack" onSubmit={handleCheckEligibility}>
+                <div className="helper-list">
+                  <div className="helper-row">
+                    <strong>강의 코드</strong>
+                    <span>{selectedCourse?.course_code ?? '-'}</span>
+                  </div>
+                  <div className="helper-row">
+                    <strong>강의실</strong>
+                    <span>서버 매핑 기준 자동 확인</span>
+                  </div>
+                  <div className="helper-row">
+                    <strong>확인 방식</strong>
+                    <span>현재 강의 기준 자동 확인</span>
+                  </div>
                 </div>
-                <div className="helper-row">
-                  <strong>강의실</strong>
-                  <span>서버 매핑 기준 자동 확인</span>
+                <button type="submit" disabled={isPending}>
+                  {isPending ? '확인 중...' : '재실 가능 여부 확인'}
+                </button>
+              </form>
+            </SectionCard>
+
+            <SectionCard title="스마트 출석 진행 현황" action={<span className="info-chip">{studentAttendanceSessions.length}개 세션</span>}>
+              {studentAttendanceSessions.length > 0 ? (
+                <div className="attendance-student-session-list">
+                  {studentAttendanceSessions.map((session) => (
+                    <article key={session.session_id} className="attendance-student-session-card">
+                      <div className="attendance-student-session-head">
+                        <strong>{session.display_label}</strong>
+                        <span className="status-pill status-pill--ok">남은시간 {formatCountdown(session.expires_at)}</span>
+                      </div>
+                      <div className="helper-list">
+                        <div className="helper-row">
+                          <strong>재실 판정</strong>
+                          <span>{session.eligibility.eligible ? '출석 가능' : session.eligibility.reason_code}</span>
+                        </div>
+                        <div className="helper-row">
+                          <strong>관측 단말</strong>
+                          <span>{session.eligibility.matched_device_mac ?? '-'}</span>
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => void handleStudentCheckIn(session.session_id)} disabled={!session.can_check_in}>
+                        {session.can_check_in ? '출석 버튼 누르기' : '출석 불가'}
+                      </button>
+                    </article>
+                  ))}
                 </div>
-                <div className="helper-row">
-                  <strong>확인 방식</strong>
-                  <span>현재 강의 기준 자동 확인</span>
+              ) : (
+                <p className="empty-state">현재 실시간으로 열린 스마트 출석 세션이 없습니다.</p>
+              )}
+            </SectionCard>
+          </>
+        ) : (
+          <div className="course-stack">
+            <SectionCard title="교수 출석 운영 대시보드" action={<span className="caption-text">학기 전체 차시 + 실시간 집계</span>}>
+              {reportSummary ? (
+                <div className="attendance-report-grid">
+                  <div className="attendance-report-card"><strong>{reportSummary.projection_slot_count}</strong><span>운영 차시</span></div>
+                  <div className="attendance-report-card"><strong>{reportSummary.active_session_count}</strong><span>활성 세션</span></div>
+                  <div className="attendance-report-card"><strong>{reportSummary.present}</strong><span>출석</span></div>
+                  <div className="attendance-report-card"><strong>{reportSummary.late}</strong><span>지각</span></div>
+                  <div className="attendance-report-card"><strong>{reportSummary.absent}</strong><span>결석</span></div>
+                  <div className="attendance-report-card"><strong>{reportSummary.official}</strong><span>공결/병가</span></div>
+                </div>
+              ) : (
+                <p className="empty-state">{attendanceLoading ? '출석 타임라인을 불러오는 중입니다.' : '출석 데이터가 아직 없습니다.'}</p>
+              )}
+            </SectionCard>
+            {attendanceMessage ? <p className="success-text">{attendanceMessage}</p> : null}
+
+            <SectionCard title="학기별 출석 타임라인">
+              {attendanceTimeline?.weeks.length ? (
+                <div className="attendance-timeline">
+                  {attendanceTimeline.weeks.map((week) => (
+                    <section key={week.week_index} className="attendance-week-block">
+                      <header className="attendance-week-head">
+                        <strong>{week.week_index}주차</strong>
+                        <span>{week.week_start} ~ {week.week_end}</span>
+                      </header>
+                      <div className="attendance-slot-list">
+                        {week.slots.map((slot) => {
+                          const badge = getSlotBadge(slot)
+                          const isSelected = selectedAttendanceSlot?.projection_key === slot.projection_key
+                          return (
+                            <article key={slot.projection_key} className={`attendance-slot-row${isSelected ? ' active' : ''}`}>
+                              <button
+                                type="button"
+                                className="attendance-slot-toggle"
+                                onClick={() => openAttendanceModal(slot)}
+                                aria-label={`${slot.display_label} 선택`}
+                              >
+                                <span className={badge.className}>{badge.symbol}</span>
+                              </button>
+                              <button type="button" className="attendance-slot-main" onClick={() => handleAttendanceRowClick(slot)}>
+                                <div className="attendance-slot-title">
+                                  <strong>{slot.lesson_index_within_week}차시 · {slot.period_label}</strong>
+                                  <span>{slot.session_date}</span>
+                                  <span>{slot.professor_name}({slot.professor_login_id})</span>
+                                  <span>{slot.classroom_code}</span>
+                                  {slot.expires_at ? <span className="caption-text">남은시간 {formatCountdown(slot.expires_at)}</span> : null}
+                                </div>
+                                <div className="caption-text">{slot.display_label}</div>
+                                <div className="attendance-slot-metrics">
+                                  <span className="attendance-metric attendance-metric--present">● {slot.aggregate.present}</span>
+                                  <span className="attendance-metric attendance-metric--late">▲ {slot.aggregate.late}</span>
+                                  <span className="attendance-metric attendance-metric--absent">✕ {slot.aggregate.absent}</span>
+                                  <span className="attendance-metric attendance-metric--official">★ {slot.aggregate.official}</span>
+                                </div>
+                              </button>
+                            </article>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-state">표시할 출석 차시가 없습니다.</p>
+              )}
+            </SectionCard>
+
+            {showProfessorTimer ? (
+              <SectionCard title="스마트 출석 진행" action={<span className="caption-text">{selectedAttendanceSlot?.display_label}</span>}>
+                <div className="helper-list">
+                  <div className="helper-row">
+                    <strong>차시</strong>
+                    <span>{selectedAttendanceSlot?.lesson_index_within_week}차시 · {selectedAttendanceSlot?.period_label}</span>
+                  </div>
+                  <div className="helper-row">
+                    <strong>상태</strong>
+                    <span>{selectedAttendanceSlot?.session_status ?? selectedAttendanceSlot?.slot_state ?? '-'}</span>
+                  </div>
+                  <div className="helper-row">
+                    <strong>남은 시간</strong>
+                    <span>{formatCountdown(selectedAttendanceSlot?.expires_at)}</span>
+                  </div>
+                </div>
+                <div className="attendance-slot-toolbar">
+                  <button type="button" onClick={() => selectedAttendanceSlot && navigate(safeAttendanceRoute(selectedAttendanceSlot.course_code, 'roster', selectedAttendanceSlot.projection_key))}>
+                    명단 페이지로 이동
+                  </button>
+                  {selectedAttendanceSlot?.session_id ? (
+                    <button type="button" className="secondary-button" onClick={() => void closeAttendanceSession(selectedAttendanceSlot.session_id!)}>
+                      세션 종료
+                    </button>
+                  ) : null}
+                </div>
+              </SectionCard>
+            ) : null}
+
+            {showProfessorRoster && selectedAttendanceSlot ? (
+              <SectionCard title="차시 상세 · 출석 명단" action={<span className="caption-text">{selectedAttendanceSlot.display_label}</span>}>
+                {selectedAttendanceSlot.session_id ? (
+                  <>
+                    <div className="attendance-slot-toolbar">
+                      <span className="status-pill status-pill--ok">
+                        {selectedAttendanceSlot.session_mode === 'smart' ? '스마트출석' : selectedAttendanceSlot.slot_state === 'canceled' ? '휴강' : '일반출석'}
+                      </span>
+                      <button type="button" onClick={() => void closeAttendanceSession(selectedAttendanceSlot.session_id!)}>
+                        세션 종료
+                      </button>
+                    </div>
+                    {attendanceRoster ? (
+                      <div className="attendance-roster-table">
+                        <div className="attendance-roster-header">
+                          <span>이름(학번)</span>
+                          <span>출석</span>
+                          <span>지각</span>
+                          <span>결석</span>
+                          <span>공결</span>
+                          <span>병가</span>
+                          <span>출석인정사유</span>
+                          <span>동작</span>
+                        </div>
+                        {attendanceRoster.students.map((student) => {
+                          const draft = rosterDrafts[student.student_id] ?? { status: 'absent' as const, reason: '' }
+                          return (
+                            <div key={student.student_id} className="attendance-roster-row">
+                              <strong>{student.student_name} ({student.student_id})</strong>
+                              {(['present', 'late', 'absent', 'official', 'sick'] as const).map((statusValue) => (
+                                <label key={statusValue} className="attendance-radio-cell">
+                                  <input
+                                    type="radio"
+                                    checked={draft.status === statusValue}
+                                    onChange={() => updateRosterDraft(student.student_id, { status: statusValue })}
+                                  />
+                                  <span>{statusValue === 'present' ? '출석' : statusValue === 'late' ? '지각' : statusValue === 'absent' ? '결석' : statusValue === 'official' ? '공결' : '병가'}</span>
+                                </label>
+                              ))}
+                              <input
+                                value={draft.reason}
+                                onChange={(event) => updateRosterDraft(student.student_id, { reason: event.target.value })}
+                                placeholder="교수 입력 즉시 승인"
+                              />
+                              <div className="attendance-row-actions">
+                                <button type="button" onClick={() => void submitRosterUpdate(student.student_id)}>저장</button>
+                                <button type="button" className="text-button" onClick={() => void loadAttendanceHistory(student.student_id)}>
+                                  전체 이력 보기 ({student.history_count})
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <p className="empty-state">학생 출석 명단을 불러오는 중입니다.</p>
+                    )}
+                  </>
+                ) : (
+                  attendanceRoster ? (
+                    <div className="attendance-roster-table">
+                      <div className="attendance-roster-header">
+                        <span>이름(학번)</span>
+                        <span>출석</span>
+                        <span>지각</span>
+                        <span>결석</span>
+                        <span>공결</span>
+                        <span>병가</span>
+                        <span>출석인정사유</span>
+                        <span>동작</span>
+                      </div>
+                      {attendanceRoster.students.map((student) => (
+                        <div key={student.student_id} className="attendance-roster-row attendance-roster-row--readonly">
+                          <strong>{student.student_name} ({student.student_id})</strong>
+                          <span>{student.final_status === 'present' ? '●' : ''}</span>
+                          <span>{student.final_status === 'late' ? '▲' : ''}</span>
+                          <span>{student.final_status === 'absent' ? '✕' : ''}</span>
+                          <span>{student.final_status === 'official' ? '★' : ''}</span>
+                          <span>{student.final_status === 'sick' ? '■' : ''}</span>
+                          <span>{student.attendance_reason ?? '-'}</span>
+                          <button type="button" className="text-button" onClick={() => void loadAttendanceHistory(student.student_id)}>
+                            전체 이력 보기 ({student.history_count})
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="empty-state">차시 row를 눌러 해당 날짜의 출석상황과 학생 목록을 확인하세요.</p>
+                  )
+                )}
+              </SectionCard>
+            ) : null}
+
+            {attendanceHistory ? (
+              <SectionCard title={`학생 전체 출석 이력 · ${attendanceHistory.student_name}`} action={<span className="caption-text">삭제 불가 이력</span>}>
+                <div className="attendance-history-list">
+                  {attendanceHistory.entries.map((entry) => (
+                    <article key={entry.audit_id} className="attendance-history-item">
+                      <div className="attendance-history-head">
+                        <strong>{entry.new_status ?? '상태 없음'}</strong>
+                        <span>{entry.changed_at}</span>
+                      </div>
+                      <p>{entry.actor_name}({entry.actor_login_id}) · {entry.change_source}</p>
+                      <p>{entry.previous_status ?? '-'} → {entry.new_status ?? '-'}</p>
+                      <p>사유: {entry.reason ?? '-'}</p>
+                    </article>
+                  ))}
+                </div>
+              </SectionCard>
+            ) : null}
+
+            {attendanceModalOpen && attendanceModalAnchorSlot ? (
+              <div className="attendance-modal-backdrop" role="presentation" onClick={() => setAttendanceModalOpen(false)}>
+                <div className="attendance-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="attendance-modal-head">
+                    <strong>출석 시작 · {attendanceModalAnchorSlot.session_date}</strong>
+                    <button type="button" className="text-button" onClick={() => setAttendanceModalOpen(false)}>닫기</button>
+                  </div>
+                  <div className="attendance-mode-group">
+                    {([
+                      ['manual', '일반출석'],
+                      ['smart', '스마트출석'],
+                      ['canceled', '휴강'],
+                    ] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={`filter-chip${selectedAttendanceMode === mode ? ' active' : ''}`}
+                        onClick={() => setSelectedAttendanceMode(mode)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="attendance-modal-slot-list">
+                    {modalDateSlots.map((slot) => (
+                      <label key={slot.projection_key} className="attendance-modal-slot-option">
+                        <input
+                          type="checkbox"
+                          checked={selectedBatchProjectionKeys.includes(slot.projection_key)}
+                          onChange={() => toggleModalProjectionKey(slot.projection_key)}
+                        />
+                        <span>{slot.lesson_index_within_week}차시 · {slot.period_label} · {slot.slot_state}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="attendance-modal-actions">
+                    <span className="caption-text">선택된 차시 {selectedBatchProjectionKeys.length}건</span>
+                    <button type="button" onClick={() => void applyAttendanceBatch()} disabled={selectedBatchProjectionKeys.length === 0}>
+                      선택 차시에 적용
+                    </button>
+                  </div>
                 </div>
               </div>
-              <button type="submit" disabled={isPending}>
-                {isPending ? '확인 중...' : '재실 가능 여부 확인'}
-              </button>
-            </form>
-          </SectionCard>
-        ) : (
-          <SectionCard title="출석 · 시험 확인">
-            <p className="empty-state">학생 계정에서만 출석 및 시험 가능 여부를 확인할 수 있습니다.</p>
-          </SectionCard>
+            ) : null}
+          </div>
         )}
 
-        <SectionCard title="확인 결과">
-          {eligibility ? (
-            <div className="result-card">
-              <div className="result-summary">
-                <span className={`status-pill status-pill--${eligibility.eligible ? 'ok' : 'blocked'}`}>
-                  {eligibility.eligible ? '이용 가능' : '이용 불가'}
-                </span>
-                <p>{getEligibilityReasonLabel(eligibility.reason_code)}</p>
-                <span className="caption-text">reason_code: {eligibility.reason_code}</span>
+        {isStudent ? (
+          <SectionCard title="확인 결과">
+            {eligibility ? (
+              <div className="result-card">
+                <div className="result-summary">
+                  <span className={`status-pill status-pill--${eligibility.eligible ? 'ok' : 'blocked'}`}>
+                    {eligibility.eligible ? '이용 가능' : '이용 불가'}
+                  </span>
+                  <p>{getEligibilityReasonLabel(eligibility.reason_code)}</p>
+                  <span className="caption-text">reason_code: {eligibility.reason_code}</span>
+                </div>
+                <div className="detail-grid">
+                  <div>
+                    <dt>등록 단말</dt>
+                    <dd>{eligibility.matched_device_mac ?? '-'}</dd>
+                  </div>
+                  <div>
+                    <dt>관측 시각</dt>
+                    <dd>{eligibility.observed_at ?? '-'}</dd>
+                  </div>
+                  <div>
+                    <dt>스냅샷 지연</dt>
+                    <dd>{eligibility.snapshot_age_seconds ?? '-'}초</dd>
+                  </div>
+                </div>
+                <pre>{formatJson(eligibility.evidence)}</pre>
               </div>
-              <div className="detail-grid">
-                <div>
-                  <dt>등록 단말</dt>
-                  <dd>{eligibility.matched_device_mac ?? '-'}</dd>
-                </div>
-                <div>
-                  <dt>관측 시각</dt>
-                  <dd>{eligibility.observed_at ?? '-'}</dd>
-                </div>
-                <div>
-                  <dt>스냅샷 지연</dt>
-                  <dd>{eligibility.snapshot_age_seconds ?? '-'}초</dd>
-                </div>
-              </div>
-              <pre>{formatJson(eligibility.evidence)}</pre>
-            </div>
-          ) : (
-            <p className="empty-state">아직 확인 결과가 없습니다.</p>
-          )}
-        </SectionCard>
+            ) : (
+              <p className="empty-state">아직 확인 결과가 없습니다.</p>
+            )}
+          </SectionCard>
+        ) : null}
       </div>
     )
   }
@@ -1722,7 +2599,7 @@ function App() {
                   key={item.id}
                   type="button"
                   className={`menu-button${courseSection === item.id ? ' active' : ''}`}
-                  onClick={() => setCourseSection(item.id)}
+                  onClick={() => selectedCourse && navigate({ kind: 'course', courseCode: selectedCourse.course_code, section: item.id })}
                 >
                   {item.label}
                 </button>
@@ -1736,7 +2613,7 @@ function App() {
                     key={item.id}
                     type="button"
                     className={`menu-button${courseSection === item.id ? ' active' : ''}`}
-                    onClick={() => setCourseSection(item.id)}
+                    onClick={() => selectedCourse && navigate({ kind: 'course', courseCode: selectedCourse.course_code, section: item.id })}
                   >
                     {item.label}
                   </button>
@@ -1771,6 +2648,22 @@ function App() {
           {courseSection === 'manage' ? renderCourseManage() : null}
         </div>
       </section>
+    )
+  }
+
+  if (!authReady) {
+    return (
+      <main className="auth-page">
+        <section className="auth-layout">
+          <article className="section-card auth-card">
+            <header className="section-head">
+              <h3>세션 확인 중</h3>
+              <span className="caption-text">로그인 상태와 경로를 복구하고 있습니다.</span>
+            </header>
+            <p className="empty-state">잠시만 기다려주세요.</p>
+          </article>
+        </section>
+      </main>
     )
   }
 
