@@ -217,6 +217,7 @@ export type AttendanceSessionRoster = {
   session: {
     session_id?: number | null
     projection_key: string
+    projection_keys?: string[]
     mode?: 'manual' | 'smart' | 'canceled' | null
     status: 'active' | 'closed' | 'expired' | 'canceled' | 'unchecked'
     expires_at?: string | null
@@ -251,6 +252,8 @@ export type AttendanceHistory = {
 export type StudentAttendanceSession = {
   session_id: number
   projection_key: string
+  projection_keys?: string[]
+  slot_labels?: string[]
   display_label: string
   session_date: string
   slot_start_at: string
@@ -296,8 +299,6 @@ type ApiErrorEnvelope = {
 }
 
 const API_BASE = (import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '')
-let accessToken: string | null = null
-const accessTokenListeners = new Set<(token: string | null) => void>()
 let authFailureHandler: (() => void) | null = null
 let refreshPromise: Promise<LoginResponse> | null = null
 
@@ -318,24 +319,6 @@ class ApiRequestError extends Error {
   }
 }
 
-function emitAccessToken(token: string | null) {
-  accessTokenListeners.forEach((listener) => listener(token))
-}
-
-export function setAccessToken(token: string | null) {
-  accessToken = token
-  emitAccessToken(token)
-}
-
-export function getAccessToken() {
-  return accessToken
-}
-
-export function subscribeAccessToken(listener: (token: string | null) => void) {
-  accessTokenListeners.add(listener)
-  return () => accessTokenListeners.delete(listener)
-}
-
 export function setAuthFailureHandler(handler: (() => void) | null) {
   authFailureHandler = handler
 }
@@ -349,7 +332,6 @@ async function requestInternal<T>(path: string, init?: RequestInit, options: Req
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -382,7 +364,6 @@ async function requestInternal<T>(path: string, init?: RequestInit, options: Req
         ? payload
         : envelope?.error?.message ?? payload?.detail ?? payload?.message ?? 'Request failed'
     if (response.status === 401 && !options.suppressAuthFailureHandler) {
-      setAccessToken(null)
       authFailureHandler?.()
     }
     throw new ApiRequestError(message, response.status, code)
@@ -413,10 +394,6 @@ async function refreshAccessToken() {
     refreshPromise = authRequest<LoginResponse>('/api/auth/refresh', {
       method: 'POST',
     })
-      .then((session) => {
-        setAccessToken(session.access_token)
-        return session
-      })
       .finally(() => {
         refreshPromise = null
       })
@@ -522,7 +499,7 @@ export const api = {
     professorId: string,
     sessionId: number,
     studentId: string,
-    payload: { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string },
+    payload: { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason?: string | null },
   ) =>
     request<{
       session_id: number

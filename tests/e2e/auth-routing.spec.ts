@@ -25,6 +25,31 @@ const professorCourses = [
   },
 ]
 
+const studentSession = {
+  success: true,
+  data: {
+    access_token: 'dev-token:20201234',
+    user: {
+      id: 10,
+      role: 'student',
+      login_id: '20201234',
+      name: 'Kim Student 01',
+    },
+  },
+  message: 'ok',
+  meta: {},
+}
+
+const studentCourses = [
+  {
+    id: 1,
+    course_code: 'CSE116',
+    title: 'Capstone Design A',
+    professor_name: 'Lee Professor 02',
+    classroom_code: 'B101',
+  },
+]
+
 const projectionKey = 'CSE116:B101:2026-03-03:15:00:00:15:30:00'
 
 const attendanceTimeline = {
@@ -84,6 +109,7 @@ const slotRoster = {
   session: {
     session_id: null,
     projection_key: projectionKey,
+    projection_keys: [projectionKey],
     mode: null,
     status: 'unchecked',
     expires_at: null,
@@ -310,20 +336,123 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
   })
 }
 
+async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
+  await page.addInitScript(() => {
+    class MockWebSocket {
+      url
+      readyState = 1
+      onopen = null
+      onmessage = null
+      onerror = null
+      onclose = null
+
+      constructor(url: string) {
+        this.url = url
+        setTimeout(() => {
+          this.onopen?.(new Event('open'))
+        }, 0)
+      }
+
+      send() {}
+
+      close() {
+        this.readyState = 3
+        this.onclose?.(new Event('close'))
+      }
+    }
+
+    // @ts-expect-error browser override for test isolation
+    window.WebSocket = MockWebSocket
+  })
+
+  await page.route('**/health', async (route) => {
+    await route.fulfill({ json: { status: 'ok' } })
+  })
+
+  await page.route('**/api/auth/bootstrap', async (route) => {
+    await route.fulfill({ json: studentSession })
+  })
+
+  await page.route('**/api/auth/me', async (route) => {
+    await route.fulfill({ json: studentSession })
+  })
+
+  await page.route('**/api/students/20201234/courses', async (route) => {
+    await route.fulfill({ json: studentCourses })
+  })
+
+  await page.route('**/api/notices/20201234', async (route) => {
+    await route.fulfill({ json: [] })
+  })
+
+  await page.route('**/api/students/20201234/devices', async (route) => {
+    await route.fulfill({ json: [] })
+  })
+
+  await page.route('**/api/students/20201234/courses/CSE116/attendance/active-sessions', async (route) => {
+    await route.fulfill({
+      json: {
+        course_code: 'CSE116',
+        student_id: '20201234',
+        sessions: [
+          {
+            session_id: 701,
+            projection_key: projectionKey,
+            projection_keys: [
+              projectionKey,
+              'CSE116:B101:2026-03-03:15:30:00:16:00:00',
+            ],
+            slot_labels: ['1차시 1교시', '2차시 2교시'],
+            display_label: '캡스톤 디자인 A 스마트출석',
+            session_date: '2026-03-03',
+            slot_start_at: '15:00:00',
+            slot_end_at: '16:00:00',
+            expires_at: '2099-03-03T15:10:00Z',
+            can_check_in: true,
+            eligibility: {
+              eligible: true,
+              reason_code: 'ATTENDANCE_CHECK_IN_OK',
+              matched_device_mac: 'AA:BB:CC:DD:EE:FF',
+            },
+            version: 1,
+          },
+        ],
+      },
+    })
+  })
+
+  await page.route('**/api/students/20201234/attendance/sessions/701/check-in', async (route) => {
+    await route.fulfill({
+      json: {
+        code: 'ATTENDANCE_CHECK_IN_OK',
+        session_id: 701,
+        projection_key: projectionKey,
+        student_id: '20201234',
+        status: 'present',
+        version: 2,
+        occurred_at: '2099-03-03T15:01:00Z',
+        course_code: 'CSE116',
+        idempotent: false,
+      },
+    })
+  })
+}
+
 test('refresh on nested professor attendance roster route restores same page', async ({ page }) => {
   await mockProfessorApp(page)
 
   const rosterPath = `/courses/CSE116/attendance/slots/${encodeURIComponent(projectionKey)}/roster`
   await page.goto(rosterPath)
 
-  await expect(page.getByText('차시 상세 · 출석 명단')).toBeVisible()
-  await expect(page.getByText('Kim Student 06 (20201239)')).toBeVisible()
+  await expect(page.getByText('차시 예외 수정 · 출석 현황')).toBeVisible()
+  await expect(page.getByText('예외 수정 차시')).toBeVisible()
+  await expect(page.getByText('Kim Student 06')).toBeVisible()
   await expect(page).toHaveURL(new RegExp(`${rosterPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
 
   await page.reload()
 
-  await expect(page.getByText('차시 상세 · 출석 명단')).toBeVisible()
-  await expect(page.getByText('Kim Student 06 (20201239)')).toBeVisible()
+  await expect(page.getByText('차시 예외 수정 · 출석 현황')).toBeVisible()
+  await expect(page.getByText('Kim Student 06')).toBeVisible()
   await expect(page).toHaveURL(new RegExp(`${rosterPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
 })
 
@@ -343,7 +472,7 @@ test('browser back and forward restore overview timeline and roster pages', asyn
 
   await page.getByRole('button', { name: /1차시 · 1교시/ }).click()
   await expect(page).toHaveURL(new RegExp(`${rosterPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
-  await expect(page.getByText('차시 상세 · 출석 명단')).toBeVisible()
+  await expect(page.getByText('차시 예외 수정 · 출석 현황')).toBeVisible()
 
   await page.goBack()
   await expect(page).toHaveURL(/\/courses\/CSE116\/attendance$/)
@@ -351,7 +480,7 @@ test('browser back and forward restore overview timeline and roster pages', asyn
 
   await page.goForward()
   await expect(page).toHaveURL(new RegExp(`${rosterPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
-  await expect(page.getByText('차시 상세 · 출석 명단')).toBeVisible()
+  await expect(page.getByText('차시 예외 수정 · 출석 현황')).toBeVisible()
 })
 
 test('unauthorized course restore falls back to a safe boundary', async ({ page }) => {
@@ -373,11 +502,10 @@ test('manual attendance selection routes to roster and shows required roster col
   await page.getByRole('button', { name: '일반출석' }).click()
   await page.getByRole('button', { name: '선택 차시에 적용' }).click()
 
-  await expect(page).toHaveURL(new RegExp(`/courses/CSE116/attendance/slots/${encodeURIComponent(projectionKey).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/roster$`))
-  await expect(page.getByText('차시 상세 · 출석 명단')).toBeVisible()
-  await expect(page.getByText('이름(학번)')).toBeVisible()
-  await expect(page.getByText('출석인정사유')).toBeVisible()
-  await expect(page.getByText('Kim Student 06 (20201239)')).toBeVisible()
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/702\/roster$/)
+  await expect(page.getByText('번들 학생 목록 · 출석 현황')).toBeVisible()
+  await expect(page.getByText('차시별 예외 수정')).toBeVisible()
+  await expect(page.getByText('Kim Student 06')).toBeVisible()
 })
 
 test('smart attendance selection routes to timer and session stop returns to roster', async ({ page }) => {
@@ -388,12 +516,12 @@ test('smart attendance selection routes to timer and session stop returns to ros
   await page.getByRole('button', { name: '스마트출석' }).click()
   await page.getByRole('button', { name: '선택 차시에 적용' }).click()
 
-  await expect(page.getByText('스마트 출석 진행')).toBeVisible()
+  await expect(page.getByText('스마트 출석 번들 진행')).toBeVisible()
   await expect(page.getByText('남은 시간')).toBeVisible()
 
-  await page.getByRole('button', { name: '세션 종료' }).click()
-  await expect(page).toHaveURL(new RegExp(`/courses/CSE116/attendance/slots/${encodeURIComponent(projectionKey).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/roster$`))
-  await expect(page.getByText('차시 상세 · 출석 명단')).toBeVisible()
+  await page.getByRole('button', { name: '출석 종료' }).click()
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/701\/roster$/)
+  await expect(page.getByText('번들 학생 목록 · 출석 현황')).toBeVisible()
 })
 
 test('revisiting an ended smart route restores to roster instead of stale timer UI', async ({ page }) => {
@@ -407,9 +535,23 @@ test('revisiting an ended smart route restores to roster instead of stale timer 
     },
   })
 
-  const timerPath = `/courses/CSE116/attendance/slots/${encodeURIComponent(projectionKey)}/timer`
+  const timerPath = `/courses/CSE116/attendance/sessions/703/timer`
   await page.goto(timerPath)
 
-  await expect(page).toHaveURL(new RegExp(`/courses/CSE116/attendance/slots/${encodeURIComponent(projectionKey).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/roster$`))
-  await expect(page.getByText('차시 상세 · 출석 명단')).toBeVisible()
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/703\/roster$/)
+  await expect(page.getByText('번들 학생 목록 · 출석 현황')).toBeVisible()
+})
+
+test('student attendance page shows one bundle card with one check-in action', async ({ page }) => {
+  await mockStudentBundleApp(page)
+
+  await page.goto('/courses/CSE116/attendance')
+
+  await expect(page.getByText('스마트 출석 번들 현황')).toBeVisible()
+  await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
+  await expect(page.getByText('1차시 1교시 · 2차시 2교시')).toBeVisible()
+  await expect(page.getByRole('button', { name: '번들 출석하기' })).toBeVisible()
+
+  await page.getByRole('button', { name: '번들 출석하기' }).click()
+  await expect(page.getByText('스마트 출석이 반영되었습니다.')).toBeVisible()
 })

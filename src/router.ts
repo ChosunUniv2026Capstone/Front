@@ -11,6 +11,7 @@ export type AppRoute =
       courseCode: string
       section: CourseSection
       attendancePage?: AttendancePage
+      sessionId?: number
       projectionKey?: string
     }
 
@@ -39,16 +40,29 @@ export function parseAppRoute(pathname: string): AppRoute {
     return { kind: 'notice', noticeId: Number(noticeMatch[1]) }
   }
 
-  const courseAttendanceDetailMatch = normalizedPath.match(
-    /^\/courses\/([^/]+)\/attendance\/slots\/([^/]+)\/(timer|roster)$/,
+  const courseAttendanceBundleMatch = normalizedPath.match(
+    /^\/courses\/([^/]+)\/attendance\/sessions\/(\d+)\/(timer|roster)$/,
   )
-  if (courseAttendanceDetailMatch) {
+  if (courseAttendanceBundleMatch) {
     return {
       kind: 'course',
-      courseCode: decodeURIComponent(courseAttendanceDetailMatch[1]),
+      courseCode: decodeURIComponent(courseAttendanceBundleMatch[1]),
       section: 'attendance',
-      projectionKey: decodeURIComponent(courseAttendanceDetailMatch[2]),
-      attendancePage: courseAttendanceDetailMatch[3] as AttendancePage,
+      sessionId: Number(courseAttendanceBundleMatch[2]),
+      attendancePage: courseAttendanceBundleMatch[3] as AttendancePage,
+    }
+  }
+
+  const courseAttendanceSlotRosterMatch = normalizedPath.match(
+    /^\/courses\/([^/]+)\/attendance\/slots\/([^/]+)\/roster$/,
+  )
+  if (courseAttendanceSlotRosterMatch) {
+    return {
+      kind: 'course',
+      courseCode: decodeURIComponent(courseAttendanceSlotRosterMatch[1]),
+      section: 'attendance',
+      projectionKey: decodeURIComponent(courseAttendanceSlotRosterMatch[2]),
+      attendancePage: 'roster',
     }
   }
 
@@ -88,7 +102,10 @@ export function buildAppPath(route: AppRoute) {
       const basePath = `/courses/${encodeURIComponent(route.courseCode)}`
       if (route.section === 'overview') return basePath
       if (route.section !== 'attendance') return `${basePath}/${route.section}`
-      if (route.attendancePage && route.attendancePage !== 'timeline' && route.projectionKey) {
+      if (route.attendancePage && route.attendancePage !== 'timeline' && route.sessionId) {
+        return `${basePath}/attendance/sessions/${route.sessionId}/${route.attendancePage}`
+      }
+      if (route.attendancePage === 'roster' && route.projectionKey) {
         return `${basePath}/attendance/slots/${encodeURIComponent(route.projectionKey)}/${route.attendancePage}`
       }
       return `${basePath}/attendance`

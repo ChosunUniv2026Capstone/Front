@@ -10,10 +10,7 @@ import {
   type AdminPresenceStation,
   api,
   formatJson,
-  getAccessToken,
   setAuthFailureHandler,
-  setAccessToken,
-  subscribeAccessToken,
   type Classroom,
   type ClassroomNetwork,
   type Course,
@@ -174,13 +171,18 @@ function defaultRouteForUser(user: LoginUser | null): AppRoute {
   return user ? { kind: 'dashboard' } : { kind: 'login' }
 }
 
-function safeAttendanceRoute(courseCode: string, attendancePage: AttendancePage, projectionKey: string): AppRoute {
+function safeAttendanceRoute(
+  courseCode: string,
+  attendancePage: AttendancePage,
+  options?: { sessionId?: number | null; projectionKey?: string | null },
+): AppRoute {
   return {
     kind: 'course',
     courseCode,
     section: 'attendance',
     attendancePage,
-    projectionKey,
+    sessionId: options?.sessionId ?? undefined,
+    projectionKey: options?.projectionKey ?? undefined,
   }
 }
 
@@ -194,7 +196,6 @@ function App() {
   const [noticeReturnRoute, setNoticeReturnRoute] = useState<AppRoute>({ kind: 'dashboard' })
   const [adminTab, setAdminTab] = useState<AdminTab>('users')
   const [authReady, setAuthReady] = useState(false)
-  const [accessTokenState, setAccessTokenState] = useState<string | null>(() => getAccessToken())
 
   const [studentId, setStudentId] = useState('20201234')
   const [label, setLabel] = useState('')
@@ -235,6 +236,7 @@ function App() {
   const [rosterDrafts, setRosterDrafts] = useState<
     Record<string, { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string }>
   >({})
+  const [studentSubmittingSessionId, setStudentSubmittingSessionId] = useState<number | null>(null)
   const [presenceControlClassroom, setPresenceControlClassroom] = useState('B101')
   const [presenceControlDeviceMac, setPresenceControlDeviceMac] = useState(DEMO_DEVICE_MAC)
   const [presenceControlApId, setPresenceControlApId] = useState('phy3-ap0')
@@ -252,6 +254,7 @@ function App() {
     ? route.attendancePage ?? 'timeline'
     : 'timeline'
   const routeProjectionKey = route.kind === 'course' && route.section === 'attendance' ? route.projectionKey ?? null : null
+  const routeSessionId = route.kind === 'course' && route.section === 'attendance' ? route.sessionId ?? null : null
 
   const isStudent = currentUser?.role === 'student'
   const isProfessor = currentUser?.role === 'professor'
@@ -263,8 +266,8 @@ function App() {
     [presenceControlApId, selectedAdminSnapshot],
   )
   const selectedAttendanceSlot = useMemo(
-    () => findAttendanceSlot(attendanceTimeline, routeProjectionKey),
-    [attendanceTimeline, routeProjectionKey],
+    () => findAttendanceSlot(attendanceTimeline, routeProjectionKey, routeSessionId),
+    [attendanceTimeline, routeProjectionKey, routeSessionId],
   )
 
   useEffect(() => {
@@ -302,13 +305,6 @@ function App() {
     const handlePopState = () => setRoute(parseAppRoute(window.location.pathname))
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
-
-  useEffect(() => {
-    const unsubscribe = subscribeAccessToken(setAccessTokenState)
-    return () => {
-      unsubscribe()
-    }
   }, [])
 
   const handleSessionExpired = useCallback(() => {
@@ -411,7 +407,6 @@ function App() {
       try {
         const restored = await api.bootstrapSession()
         if (cancelled) return
-        setAccessToken(restored.access_token)
         setCurrentUser(restored.user)
         resetRoleData()
 
@@ -428,7 +423,6 @@ function App() {
         }
       } catch {
         if (cancelled) return
-        setAccessToken(null)
         setCurrentUser(null)
         resetRoleData()
         if (parseAppRoute(window.location.pathname).kind !== 'login') {
@@ -530,6 +524,7 @@ function App() {
     setAttendanceModalOpen(false)
     setAttendanceModalAnchorSlot(null)
     setSelectedBatchProjectionKeys([])
+    setStudentSubmittingSessionId(null)
     setAttendanceMessage(null)
     setRosterDrafts({})
   }
@@ -539,7 +534,6 @@ function App() {
     try {
       setError(null)
       const result = await api.login({ login_id: loginId, password })
-      setAccessToken(result.access_token)
       setCurrentUser(result.user)
       resetRoleData()
 
@@ -553,7 +547,6 @@ function App() {
 
       navigateToDefault(result.user, { replace: true })
     } catch (caughtError) {
-      setAccessToken(null)
       setCurrentUser(null)
       resetRoleData()
       setError(caughtError instanceof Error ? caughtError.message : '로그인에 실패했습니다.')
@@ -566,7 +559,6 @@ function App() {
     } catch {
       // ignore logout cleanup failures and continue local sign-out
     } finally {
-      setAccessToken(null)
       setCurrentUser(null)
       resetRoleData()
       setError(null)
@@ -656,13 +648,40 @@ function App() {
     })
   }
 
-  function findAttendanceSlot(nextTimeline: AttendanceTimeline | null, projectionKey: string | null) {
-    if (!nextTimeline || !projectionKey) return null
+  function findAttendanceSlot(
+    nextTimeline: AttendanceTimeline | null,
+    projectionKey: string | null,
+    sessionId?: number | null,
+  ) {
+    if (!nextTimeline) return null
+    if (sessionId != null) {
+      for (const week of nextTimeline.weeks) {
+        const slot = week.slots.find((item) => item.session_id === sessionId)
+        if (slot) return slot
+      }
+    }
+    if (!projectionKey) return null
     for (const week of nextTimeline.weeks) {
       const slot = week.slots.find((item) => item.projection_key === projectionKey)
       if (slot) return slot
     }
     return null
+  }
+
+  function getBundleSlots(
+    nextTimeline: AttendanceTimeline | null,
+    sessionId: number | null,
+    fallbackProjectionKey?: string | null,
+  ) {
+    if (!nextTimeline) return []
+    if (sessionId != null) {
+      return nextTimeline.weeks
+        .flatMap((week) => week.slots)
+        .filter((slot) => slot.session_id === sessionId)
+    }
+    if (!fallbackProjectionKey) return []
+    const slot = findAttendanceSlot(nextTimeline, fallbackProjectionKey, null)
+    return slot ? [slot] : []
   }
 
   const refreshProfessorAttendance = useCallback(async (nextCourseCode = selectedCourse?.course_code) => {
@@ -702,9 +721,11 @@ function App() {
       setRosterDrafts((current) => {
         const nextDrafts = { ...current }
         nextRoster.students.forEach((student) => {
-          nextDrafts[student.student_id] = {
-            status: (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent',
-            reason: student.attendance_reason ?? '',
+          if (!nextDrafts[student.student_id]) {
+            nextDrafts[student.student_id] = {
+              status: (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent',
+              reason: student.attendance_reason ?? '',
+            }
           }
         })
         return nextDrafts
@@ -722,9 +743,11 @@ function App() {
       setRosterDrafts((current) => {
         const nextDrafts = { ...current }
         nextRoster.students.forEach((student) => {
-          nextDrafts[student.student_id] = {
-            status: (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent',
-            reason: student.attendance_reason ?? '',
+          if (!nextDrafts[student.student_id]) {
+            nextDrafts[student.student_id] = {
+              status: (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent',
+              reason: student.attendance_reason ?? '',
+            }
           }
         })
         return nextDrafts
@@ -760,20 +783,21 @@ function App() {
       setAttendanceModalOpen(false)
       setAttendanceModalAnchorSlot(null)
       await refreshProfessorAttendance(selectedCourse.course_code)
-      const primaryProjectionKey = attendanceModalAnchorSlot?.projection_key ?? result.changed_projection_keys[0]
-      if (primaryProjectionKey) {
-        if (selectedAttendanceMode === 'smart') {
-          navigate(safeAttendanceRoute(selectedCourse.course_code, 'timer', primaryProjectionKey))
-        } else if (selectedAttendanceMode === 'manual') {
-          navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', primaryProjectionKey))
-        } else {
-          navigate({
-            kind: 'course',
-            courseCode: selectedCourse.course_code,
-            section: 'attendance',
-            attendancePage: 'timeline',
-          })
-        }
+      const nextSessionId = result.changed_session_ids[0] ?? null
+      const primaryProjectionKey = attendanceModalAnchorSlot?.projection_key ?? result.changed_projection_keys[0] ?? null
+      if (selectedAttendanceMode === 'smart' && nextSessionId) {
+        navigate(safeAttendanceRoute(selectedCourse.course_code, 'timer', { sessionId: nextSessionId }))
+      } else if (selectedAttendanceMode === 'manual' && nextSessionId) {
+        navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', { sessionId: nextSessionId }))
+      } else if (selectedAttendanceMode === 'manual' && primaryProjectionKey) {
+        navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', { projectionKey: primaryProjectionKey }))
+      } else {
+        navigate({
+          kind: 'course',
+          courseCode: selectedCourse.course_code,
+          section: 'attendance',
+          attendancePage: 'timeline',
+        })
       }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '출석 세션을 적용하지 못했습니다.')
@@ -786,8 +810,8 @@ function App() {
       await api.closeProfessorAttendanceSession(currentUser.login_id, sessionId)
       setAttendanceMessage('선택한 출석 세션을 종료했습니다.')
       await refreshProfessorAttendance()
-      if (selectedCourse && selectedAttendanceSlot) {
-        navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', selectedAttendanceSlot.projection_key), { replace: true })
+      if (selectedCourse) {
+        navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', { sessionId }), { replace: true })
       }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '출석 세션을 종료하지 못했습니다.')
@@ -796,7 +820,11 @@ function App() {
 
   function handleAttendanceRowClick(slot: AttendanceSlot) {
     setAttendanceHistory(null)
-    navigate(safeAttendanceRoute(slot.course_code, 'roster', slot.projection_key))
+    if (slot.session_id) {
+      navigate(safeAttendanceRoute(slot.course_code, 'roster', { sessionId: slot.session_id }))
+      return
+    }
+    navigate(safeAttendanceRoute(slot.course_code, 'roster', { projectionKey: slot.projection_key }))
   }
 
   function openAttendanceModal(slot: AttendanceSlot) {
@@ -841,7 +869,6 @@ function App() {
       setAttendanceMessage('학생 출석 상태를 저장했습니다.')
       await loadAttendanceRoster(attendanceRoster.session.session_id)
       await refreshProfessorAttendance()
-      await loadAttendanceHistory(studentIdValue)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '학생 출석 상태를 저장하지 못했습니다.')
     }
@@ -849,12 +876,15 @@ function App() {
 
   async function handleStudentCheckIn(sessionId: number) {
     if (!currentUser || currentUser.role !== 'student') return
+    setStudentSubmittingSessionId(sessionId)
     try {
       const result = await api.studentAttendanceCheckIn(currentUser.login_id, sessionId)
       setAttendanceMessage(result.idempotent ? '이미 출석 처리된 세션입니다.' : '스마트 출석이 반영되었습니다.')
       await refreshStudentAttendance()
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '스마트 출석에 실패했습니다.')
+    } finally {
+      setStudentSubmittingSessionId(null)
     }
   }
 
@@ -876,9 +906,17 @@ function App() {
 
   useEffect(() => {
     if (courseSection !== 'attendance' || !selectedCourse || !currentUser) return
-    if (!accessTokenState) return
+    if (currentUser.role !== 'student') return
+    const refresh = window.setInterval(() => {
+      void refreshStudentAttendance(selectedCourse.course_code)
+    }, 1000)
+    return () => window.clearInterval(refresh)
+  }, [courseSection, currentUser, refreshStudentAttendance, selectedCourse])
+
+  useEffect(() => {
+    if (courseSection !== 'attendance' || !selectedCourse || !currentUser) return
     const baseUrl = (import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '')
-    const socketUrl = `${baseUrl.replace(/^http/, 'ws')}/ws/attendance?token=${encodeURIComponent(accessTokenState)}&courseCode=${encodeURIComponent(selectedCourse.course_code)}&view=${encodeURIComponent(currentUser.role === 'student' ? 'student' : 'professor')}`
+    const socketUrl = `${baseUrl.replace(/^http/, 'ws')}/ws/attendance?courseCode=${encodeURIComponent(selectedCourse.course_code)}&view=${encodeURIComponent(currentUser.role === 'student' ? 'student' : 'professor')}`
     const socket = new WebSocket(socketUrl)
     socket.onmessage = (event) => {
       try {
@@ -907,7 +945,7 @@ function App() {
       }
     }
     return () => socket.close()
-  }, [accessTokenState, courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
+  }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
 
   function handleAddLearningItem(event: FormEvent) {
     event.preventDefault()
@@ -1050,6 +1088,10 @@ function App() {
   }, [courses, currentUser, navigate, navigateToDefault, route, selectedCourse?.course_code])
 
   useEffect(() => {
+    setRosterDrafts({})
+  }, [routeProjectionKey, routeSessionId])
+
+  useEffect(() => {
     if (!selectedCourse || route.kind !== 'course' || route.section !== 'attendance' || !currentUser) {
       return
     }
@@ -1058,12 +1100,12 @@ function App() {
       return
     }
 
-    if (!routeProjectionKey) {
+    if (!routeProjectionKey && !routeSessionId) {
       setAttendanceRoster(null)
       return
     }
 
-    const slot = findAttendanceSlot(attendanceTimeline, routeProjectionKey)
+    const slot = findAttendanceSlot(attendanceTimeline, routeProjectionKey, routeSessionId)
     if (!slot) {
       if (attendanceTimeline) {
         setError('선택한 출석 차시를 찾지 못했습니다.')
@@ -1080,17 +1122,27 @@ function App() {
     if (routeAttendancePage === 'timer') {
       const expired = !slot.expires_at || new Date(slot.expires_at).getTime() <= attendanceNow
       const inactive = slot.session_status && slot.session_status !== 'active'
+      if (slot.session_id) {
+        void loadAttendanceRoster(slot.session_id)
+      }
       if (!slot.session_id || expired || inactive) {
-        navigate(safeAttendanceRoute(selectedCourse.course_code, 'roster', slot.projection_key), { replace: true })
+        navigate(
+          safeAttendanceRoute(
+            selectedCourse.course_code,
+            'roster',
+            routeSessionId != null ? { sessionId: routeSessionId } : { projectionKey: slot.projection_key },
+          ),
+          { replace: true },
+        )
       }
       return
     }
 
     if (routeAttendancePage === 'roster') {
-      if (slot.session_id) {
-        void loadAttendanceRoster(slot.session_id)
-      } else {
+      if (routeProjectionKey) {
         void loadAttendanceSlotRoster(slot.projection_key)
+      } else if (slot.session_id) {
+        void loadAttendanceRoster(slot.session_id)
       }
     }
   }, [
@@ -1103,6 +1155,7 @@ function App() {
     route,
     routeAttendancePage,
     routeProjectionKey,
+    routeSessionId,
     selectedCourse,
   ])
 
@@ -2223,11 +2276,34 @@ function App() {
       return `${minutes}:${seconds}`
     }
 
+    function isLiveCheckedIn(status?: string | null) {
+      return status === 'present' || status === 'late' || status === 'official'
+    }
+
+    function formatProjectionKeySlotLabel(projectionKey: string) {
+      const parts = projectionKey.split(':')
+      if (parts.length >= 9) {
+        return `${parts.slice(3, 6).join(':')} ~ ${parts.slice(6, 9).join(':')}`
+      }
+      return projectionKey
+    }
+
+    function getStudentBundleSlotLabels(session: (typeof studentAttendanceSessions)[number]) {
+      if (session.slot_labels?.length) return session.slot_labels
+      if (session.projection_keys?.length) return session.projection_keys.map(formatProjectionKeySlotLabel)
+      return [session.display_label]
+    }
+
     const reportSummary = attendanceTimeline?.report_summary
     const modalDateSlots =
       attendanceTimeline?.weeks
         .flatMap((week) => week.slots)
         .filter((slot) => slot.session_date === attendanceModalAnchorSlot?.session_date) ?? []
+    const bundleSlots = getBundleSlots(
+      attendanceTimeline,
+      routeSessionId ?? selectedAttendanceSlot?.session_id ?? null,
+      routeProjectionKey,
+    )
     const showProfessorTimer = isProfessor && routeAttendancePage === 'timer' && Boolean(selectedAttendanceSlot)
     const showProfessorRoster = isProfessor && routeAttendancePage === 'roster' && Boolean(selectedAttendanceSlot)
 
@@ -2257,16 +2333,23 @@ function App() {
               </form>
             </SectionCard>
 
-            <SectionCard title="스마트 출석 진행 현황" action={<span className="info-chip">{studentAttendanceSessions.length}개 세션</span>}>
+            <SectionCard
+              title="스마트 출석 번들 현황"
+              action={<span className="info-chip">{studentAttendanceSessions.length}개 번들</span>}
+            >
               {studentAttendanceSessions.length > 0 ? (
                 <div className="attendance-student-session-list">
                   {studentAttendanceSessions.map((session) => (
                     <article key={session.session_id} className="attendance-student-session-card">
                       <div className="attendance-student-session-head">
-                        <strong>{session.display_label}</strong>
+                        <strong>{session.display_label || `출석 번들 #${session.session_id}`}</strong>
                         <span className="status-pill status-pill--ok">남은시간 {formatCountdown(session.expires_at)}</span>
                       </div>
                       <div className="helper-list">
+                        <div className="helper-row">
+                          <strong>포함 차시</strong>
+                          <span>{getStudentBundleSlotLabels(session).join(' · ')}</span>
+                        </div>
                         <div className="helper-row">
                           <strong>재실 판정</strong>
                           <span>{session.eligibility.eligible ? '출석 가능' : session.eligibility.reason_code}</span>
@@ -2276,19 +2359,25 @@ function App() {
                           <span>{session.eligibility.matched_device_mac ?? '-'}</span>
                         </div>
                       </div>
-                      <button type="button" onClick={() => void handleStudentCheckIn(session.session_id)} disabled={!session.can_check_in}>
-                        {session.can_check_in ? '출석 버튼 누르기' : '출석 불가'}
+                      <button
+                        type="button"
+                        onClick={() => void handleStudentCheckIn(session.session_id)}
+                        disabled={!session.can_check_in || studentSubmittingSessionId === session.session_id}
+                      >
+                        {studentSubmittingSessionId === session.session_id ? '처리 중...' : session.can_check_in ? '번들 출석하기' : '출석 불가'}
                       </button>
                     </article>
                   ))}
                 </div>
               ) : (
-                <p className="empty-state">현재 실시간으로 열린 스마트 출석 세션이 없습니다.</p>
+                <p className="empty-state">현재 실시간으로 열린 스마트 출석 번들이 없습니다.</p>
               )}
             </SectionCard>
+            {attendanceMessage ? <p className="success-text">{attendanceMessage}</p> : null}
           </>
         ) : (
           <div className="course-stack">
+            {!showProfessorTimer && !showProfessorRoster ? (
             <SectionCard title="교수 출석 운영 대시보드" action={<span className="caption-text">학기 전체 차시 + 실시간 집계</span>}>
               {reportSummary ? (
                 <div className="attendance-report-grid">
@@ -2303,8 +2392,226 @@ function App() {
                 <p className="empty-state">{attendanceLoading ? '출석 타임라인을 불러오는 중입니다.' : '출석 데이터가 아직 없습니다.'}</p>
               )}
             </SectionCard>
+            ) : null}
+
+            {showProfessorTimer ? (
+              <SectionCard title="스마트 출석 번들 진행" action={<span className="caption-text">bundle session #{routeSessionId ?? selectedAttendanceSlot?.session_id ?? '-'}</span>}>
+                <div className="attendance-slot-toolbar">
+                  <button type="button" className="text-button" onClick={() => navigate(safeAttendanceRoute(selectedCourse?.course_code ?? '', 'timeline'))}>
+                    타임라인으로
+                  </button>
+                  {selectedAttendanceSlot?.session_id ? (
+                    <button type="button" className="secondary-button" onClick={() => void closeAttendanceSession(selectedAttendanceSlot.session_id!)}>
+                      출석 종료
+                    </button>
+                  ) : null}
+                </div>
+                <div className="helper-list">
+                  <div className="helper-row">
+                    <strong>포함 차시</strong>
+                    <span>{bundleSlots.map((slot) => `${slot.lesson_index_within_week}차시 ${slot.period_label}`).join(' · ')}</span>
+                  </div>
+                  <div className="helper-row">
+                    <strong>Anchor 차시</strong>
+                    <span>{selectedAttendanceSlot?.lesson_index_within_week}차시 · {selectedAttendanceSlot?.period_label}</span>
+                  </div>
+                  <div className="helper-row">
+                    <strong>상태</strong>
+                    <span>{selectedAttendanceSlot?.session_status ?? selectedAttendanceSlot?.slot_state ?? '-'}</span>
+                  </div>
+                  <div className="helper-row">
+                    <strong>남은 시간</strong>
+                    <span>{formatCountdown(selectedAttendanceSlot?.expires_at)}</span>
+                  </div>
+                </div>
+                {attendanceRoster ? (
+                  <div className="attendance-live-roster">
+                    <div className="attendance-live-roster-head">
+                      <strong>실시간 학생 현황</strong>
+                      <span className="caption-text">학번 / 이름 / 체크 여부</span>
+                    </div>
+                    <div className="attendance-roster-scroll">
+                      <table className="attendance-live-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">학번</th>
+                            <th scope="col">이름</th>
+                            <th scope="col">체크</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attendanceRoster.students.map((student) => (
+                            <tr key={student.student_id}>
+                              <td className="attendance-roster-id-cell">{student.student_id}</td>
+                              <td className="attendance-roster-name-cell">{student.student_name}</td>
+                              <td>
+                                <span className={`attendance-live-mark${isLiveCheckedIn(student.final_status) ? ' attendance-live-mark--checked' : ' attendance-live-mark--unchecked'}`}>
+                                  {isLiveCheckedIn(student.final_status) ? 'O' : 'X'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="empty-state">학생 체크 현황을 불러오는 중입니다.</p>
+                )}
+              </SectionCard>
+            ) : null}
+
+            {showProfessorRoster && selectedAttendanceSlot ? (
+              <SectionCard
+                title={routeSessionId != null ? '번들 학생 목록 · 출석 현황' : '차시 예외 수정 · 출석 현황'}
+                action={<span className="caption-text">{selectedAttendanceSlot.display_label}</span>}
+              >
+                <div className="attendance-slot-toolbar">
+                  <button type="button" className="text-button" onClick={() => navigate(safeAttendanceRoute(selectedAttendanceSlot.course_code, 'timeline'))}>
+                    타임라인으로
+                  </button>
+                  <span className="status-pill status-pill--ok">
+                    {routeSessionId != null
+                      ? selectedAttendanceSlot.session_mode === 'smart'
+                        ? '스마트 번들'
+                        : selectedAttendanceSlot.slot_state === 'canceled'
+                          ? '휴강 번들'
+                          : selectedAttendanceSlot.slot_state === 'unchecked'
+                            ? '미체크'
+                            : '일반 번들'
+                      : '차시 예외 수정'}
+                  </span>
+                </div>
+                <div className="helper-list">
+                  <div className="helper-row">
+                    <strong>{routeSessionId != null ? '포함 차시' : '예외 수정 차시'}</strong>
+                    <span>
+                      {routeSessionId != null
+                        ? bundleSlots.map((slot) => `${slot.lesson_index_within_week}차시 ${slot.period_label}`).join(' · ')
+                        : `${selectedAttendanceSlot.lesson_index_within_week}차시 ${selectedAttendanceSlot.period_label}`}
+                    </span>
+                  </div>
+                  {routeSessionId != null ? (
+                    <div className="helper-row">
+                      <strong>차시별 예외 수정</strong>
+                      <span>
+                        {bundleSlots.map((slot) => (
+                          <button
+                            key={slot.projection_key}
+                            type="button"
+                            className="text-button"
+                            onClick={() =>
+                              navigate(
+                                safeAttendanceRoute(slot.course_code, 'roster', { projectionKey: slot.projection_key }),
+                              )
+                            }
+                          >
+                            {slot.lesson_index_within_week}차시
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+                {attendanceRoster ? (
+                  <div className="attendance-roster-scroll">
+                    <table className="attendance-roster-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">학번</th>
+                          <th scope="col">이름</th>
+                          <th scope="col">출석 ●</th>
+                          <th scope="col">지각 ▲</th>
+                          <th scope="col">결석 ✕</th>
+                          <th scope="col">공결 ★</th>
+                          <th scope="col">사유</th>
+                          <th scope="col">동작</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendanceRoster.students.map((student) => {
+                          const draft = rosterDrafts[student.student_id] ?? { status: 'absent' as const, reason: '' }
+                          const radioName = `attendance-status-${student.student_id}`
+                          return (
+                            <tr key={student.student_id}>
+                              <td className="attendance-roster-id-cell">{student.student_id}</td>
+                              <td className="attendance-roster-name-cell">{student.student_name}</td>
+                              <td>
+                                <label className={`attendance-status-option attendance-status-option--present${draft.status === 'present' ? ' active' : ''}`}>
+                                  <input
+                                    type="radio"
+                                    name={radioName}
+                                    checked={draft.status === 'present'}
+                                    onChange={() => updateRosterDraft(student.student_id, { status: 'present' })}
+                                  />
+                                  <span>●</span>
+                                </label>
+                              </td>
+                              <td>
+                                <label className={`attendance-status-option attendance-status-option--late${draft.status === 'late' ? ' active' : ''}`}>
+                                  <input
+                                    type="radio"
+                                    name={radioName}
+                                    checked={draft.status === 'late'}
+                                    onChange={() => updateRosterDraft(student.student_id, { status: 'late' })}
+                                  />
+                                  <span>▲</span>
+                                </label>
+                              </td>
+                              <td>
+                                <label className={`attendance-status-option attendance-status-option--absent${draft.status === 'absent' ? ' active' : ''}`}>
+                                  <input
+                                    type="radio"
+                                    name={radioName}
+                                    checked={draft.status === 'absent'}
+                                    onChange={() => updateRosterDraft(student.student_id, { status: 'absent' })}
+                                  />
+                                  <span>✕</span>
+                                </label>
+                              </td>
+                              <td>
+                                <label className={`attendance-status-option attendance-status-option--official${draft.status === 'official' ? ' active' : ''}`}>
+                                  <input
+                                    type="radio"
+                                    name={radioName}
+                                    checked={draft.status === 'official'}
+                                    onChange={() => updateRosterDraft(student.student_id, { status: 'official' })}
+                                  />
+                                  <span>★</span>
+                                </label>
+                              </td>
+                              <td>
+                                <input
+                                  className="attendance-reason-input"
+                                  value={draft.reason}
+                                  onChange={(event) => updateRosterDraft(student.student_id, { reason: event.target.value })}
+                                  placeholder="사유 입력"
+                                />
+                              </td>
+                              <td>
+                                <div className="attendance-row-actions">
+                                  {attendanceRoster.session.session_id ? (
+                                    <button type="button" onClick={() => void submitRosterUpdate(student.student_id)}>저장</button>
+                                  ) : null}
+                                  <button type="button" className="text-button" onClick={() => void loadAttendanceHistory(student.student_id)}>
+                                    이력
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="empty-state">학생 목록을 불러오는 중입니다.</p>
+                )}
+              </SectionCard>
+            ) : null}
             {attendanceMessage ? <p className="success-text">{attendanceMessage}</p> : null}
 
+            {!showProfessorTimer && !showProfessorRoster ? (
             <SectionCard title="학기별 출석 타임라인">
               {attendanceTimeline?.weeks.length ? (
                 <div className="attendance-timeline">
@@ -2317,7 +2624,9 @@ function App() {
                       <div className="attendance-slot-list">
                         {week.slots.map((slot) => {
                           const badge = getSlotBadge(slot)
-                          const isSelected = selectedAttendanceSlot?.projection_key === slot.projection_key
+                          const isSelected = routeSessionId != null
+                            ? slot.session_id != null && slot.session_id === routeSessionId
+                            : selectedAttendanceSlot?.projection_key === slot.projection_key
                           return (
                             <article key={slot.projection_key} className={`attendance-slot-row${isSelected ? ' active' : ''}`}>
                               <button
@@ -2355,145 +2664,6 @@ function App() {
                 <p className="empty-state">표시할 출석 차시가 없습니다.</p>
               )}
             </SectionCard>
-
-            {showProfessorTimer ? (
-              <SectionCard title="스마트 출석 진행" action={<span className="caption-text">{selectedAttendanceSlot?.display_label}</span>}>
-                <div className="helper-list">
-                  <div className="helper-row">
-                    <strong>차시</strong>
-                    <span>{selectedAttendanceSlot?.lesson_index_within_week}차시 · {selectedAttendanceSlot?.period_label}</span>
-                  </div>
-                  <div className="helper-row">
-                    <strong>상태</strong>
-                    <span>{selectedAttendanceSlot?.session_status ?? selectedAttendanceSlot?.slot_state ?? '-'}</span>
-                  </div>
-                  <div className="helper-row">
-                    <strong>남은 시간</strong>
-                    <span>{formatCountdown(selectedAttendanceSlot?.expires_at)}</span>
-                  </div>
-                </div>
-                <div className="attendance-slot-toolbar">
-                  <button type="button" onClick={() => selectedAttendanceSlot && navigate(safeAttendanceRoute(selectedAttendanceSlot.course_code, 'roster', selectedAttendanceSlot.projection_key))}>
-                    명단 페이지로 이동
-                  </button>
-                  {selectedAttendanceSlot?.session_id ? (
-                    <button type="button" className="secondary-button" onClick={() => void closeAttendanceSession(selectedAttendanceSlot.session_id!)}>
-                      세션 종료
-                    </button>
-                  ) : null}
-                </div>
-              </SectionCard>
-            ) : null}
-
-            {showProfessorRoster && selectedAttendanceSlot ? (
-              <SectionCard title="차시 상세 · 출석 명단" action={<span className="caption-text">{selectedAttendanceSlot.display_label}</span>}>
-                {selectedAttendanceSlot.session_id ? (
-                  <>
-                    <div className="attendance-slot-toolbar">
-                      <span className="status-pill status-pill--ok">
-                        {selectedAttendanceSlot.session_mode === 'smart' ? '스마트출석' : selectedAttendanceSlot.slot_state === 'canceled' ? '휴강' : '일반출석'}
-                      </span>
-                      <button type="button" onClick={() => void closeAttendanceSession(selectedAttendanceSlot.session_id!)}>
-                        세션 종료
-                      </button>
-                    </div>
-                    {attendanceRoster ? (
-                      <div className="attendance-roster-table">
-                        <div className="attendance-roster-header">
-                          <span>이름(학번)</span>
-                          <span>출석</span>
-                          <span>지각</span>
-                          <span>결석</span>
-                          <span>공결</span>
-                          <span>병가</span>
-                          <span>출석인정사유</span>
-                          <span>동작</span>
-                        </div>
-                        {attendanceRoster.students.map((student) => {
-                          const draft = rosterDrafts[student.student_id] ?? { status: 'absent' as const, reason: '' }
-                          return (
-                            <div key={student.student_id} className="attendance-roster-row">
-                              <strong>{student.student_name} ({student.student_id})</strong>
-                              {(['present', 'late', 'absent', 'official', 'sick'] as const).map((statusValue) => (
-                                <label key={statusValue} className="attendance-radio-cell">
-                                  <input
-                                    type="radio"
-                                    checked={draft.status === statusValue}
-                                    onChange={() => updateRosterDraft(student.student_id, { status: statusValue })}
-                                  />
-                                  <span>{statusValue === 'present' ? '출석' : statusValue === 'late' ? '지각' : statusValue === 'absent' ? '결석' : statusValue === 'official' ? '공결' : '병가'}</span>
-                                </label>
-                              ))}
-                              <input
-                                value={draft.reason}
-                                onChange={(event) => updateRosterDraft(student.student_id, { reason: event.target.value })}
-                                placeholder="교수 입력 즉시 승인"
-                              />
-                              <div className="attendance-row-actions">
-                                <button type="button" onClick={() => void submitRosterUpdate(student.student_id)}>저장</button>
-                                <button type="button" className="text-button" onClick={() => void loadAttendanceHistory(student.student_id)}>
-                                  전체 이력 보기 ({student.history_count})
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <p className="empty-state">학생 출석 명단을 불러오는 중입니다.</p>
-                    )}
-                  </>
-                ) : (
-                  attendanceRoster ? (
-                    <div className="attendance-roster-table">
-                      <div className="attendance-roster-header">
-                        <span>이름(학번)</span>
-                        <span>출석</span>
-                        <span>지각</span>
-                        <span>결석</span>
-                        <span>공결</span>
-                        <span>병가</span>
-                        <span>출석인정사유</span>
-                        <span>동작</span>
-                      </div>
-                      {attendanceRoster.students.map((student) => (
-                        <div key={student.student_id} className="attendance-roster-row attendance-roster-row--readonly">
-                          <strong>{student.student_name} ({student.student_id})</strong>
-                          <span>{student.final_status === 'present' ? '●' : ''}</span>
-                          <span>{student.final_status === 'late' ? '▲' : ''}</span>
-                          <span>{student.final_status === 'absent' ? '✕' : ''}</span>
-                          <span>{student.final_status === 'official' ? '★' : ''}</span>
-                          <span>{student.final_status === 'sick' ? '■' : ''}</span>
-                          <span>{student.attendance_reason ?? '-'}</span>
-                          <button type="button" className="text-button" onClick={() => void loadAttendanceHistory(student.student_id)}>
-                            전체 이력 보기 ({student.history_count})
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="empty-state">차시 row를 눌러 해당 날짜의 출석상황과 학생 목록을 확인하세요.</p>
-                  )
-                )}
-              </SectionCard>
-            ) : null}
-
-            {attendanceHistory ? (
-              <SectionCard title={`학생 전체 출석 이력 · ${attendanceHistory.student_name}`} action={<span className="caption-text">삭제 불가 이력</span>}>
-                <div className="attendance-history-list">
-                  {attendanceHistory.entries.map((entry) => (
-                    <article key={entry.audit_id} className="attendance-history-item">
-                      <div className="attendance-history-head">
-                        <strong>{entry.new_status ?? '상태 없음'}</strong>
-                        <span>{entry.changed_at}</span>
-                      </div>
-                      <p>{entry.actor_name}({entry.actor_login_id}) · {entry.change_source}</p>
-                      <p>{entry.previous_status ?? '-'} → {entry.new_status ?? '-'}</p>
-                      <p>사유: {entry.reason ?? '-'}</p>
-                    </article>
-                  ))}
-                </div>
-              </SectionCard>
             ) : null}
 
             {attendanceModalOpen && attendanceModalAnchorSlot ? (
@@ -2536,6 +2706,31 @@ function App() {
                     <button type="button" onClick={() => void applyAttendanceBatch()} disabled={selectedBatchProjectionKeys.length === 0}>
                       선택 차시에 적용
                     </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {attendanceHistory ? (
+              <div className="attendance-modal-backdrop" role="presentation" onClick={() => setAttendanceHistory(null)}>
+                <div className="attendance-modal attendance-modal--history" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="attendance-modal-head">
+                    <strong>학생 출석 이력 · {attendanceHistory.student_name}</strong>
+                    <button type="button" className="text-button" onClick={() => setAttendanceHistory(null)}>닫기</button>
+                  </div>
+                  <span className="caption-text">삭제 불가 이력</span>
+                  <div className="attendance-history-list">
+                    {attendanceHistory.entries.map((entry) => (
+                      <article key={entry.audit_id} className="attendance-history-item">
+                        <div className="attendance-history-head">
+                          <strong>{entry.new_status ?? '상태 없음'}</strong>
+                          <span>{entry.changed_at}</span>
+                        </div>
+                        <p>{entry.actor_name}({entry.actor_login_id}) · {entry.change_source}</p>
+                        <p>{entry.previous_status ?? '-'} → {entry.new_status ?? '-'}</p>
+                        <p>사유: {entry.reason ?? '-'}</p>
+                      </article>
+                    ))}
                   </div>
                 </div>
               </div>
