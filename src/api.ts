@@ -270,6 +270,46 @@ export type StudentActiveAttendanceSessions = {
   sessions: StudentAttendanceSession[]
 }
 
+export type StudentAttendanceSemesterMatrixCell = {
+  projection_key: string
+  lesson_index_within_week: number
+  period_label: string
+  display_label: string
+  session_date: string
+  status: 'present' | 'late' | 'absent' | 'official' | 'pending' | 'upcoming' | 'canceled'
+}
+
+export type StudentAttendanceSemesterMatrixWeek = {
+  week_index: number
+  week_start: string
+  week_end: string
+  slots: StudentAttendanceSemesterMatrixCell[]
+}
+
+export type StudentAttendanceSemesterMatrix = {
+  course_code: string
+  course_title: string
+  student_id: string
+  student_name: string
+  weeks: StudentAttendanceSemesterMatrixWeek[]
+}
+
+export type ProfessorAttendanceStudentStatsRow = {
+  student_id: string
+  student_name: string
+  present: number
+  late: number
+  absent: number
+  official: number
+  sick: number
+}
+
+export type ProfessorAttendanceStudentStats = {
+  course_code: string
+  course_title: string
+  rows: ProfessorAttendanceStudentStatsRow[]
+}
+
 export type AttendanceCheckInResult = {
   code: string
   session_id: number
@@ -516,8 +556,12 @@ export const api = {
     }),
   getProfessorAttendanceHistory: (professorId: string, courseCode: string, studentId: string) =>
     request<AttendanceHistory>(`/api/professors/${professorId}/courses/${courseCode}/attendance/students/${studentId}/history`),
+  getProfessorAttendanceStudentStats: (professorId: string, courseCode: string) =>
+    request<ProfessorAttendanceStudentStats>(`/api/professors/${professorId}/courses/${courseCode}/attendance/student-stats`),
   listStudentActiveAttendanceSessions: (studentId: string, courseCode: string) =>
     request<StudentActiveAttendanceSessions>(`/api/students/${studentId}/courses/${courseCode}/attendance/active-sessions`),
+  getStudentAttendanceSemesterMatrix: (studentId: string, courseCode: string) =>
+    request<StudentAttendanceSemesterMatrix>(`/api/students/${studentId}/courses/${courseCode}/attendance/semester-matrix`),
   studentAttendanceCheckIn: (studentId: string, sessionId: number) =>
     request<AttendanceCheckInResult>(`/api/students/${studentId}/attendance/sessions/${sessionId}/check-in`, {
       method: 'POST',

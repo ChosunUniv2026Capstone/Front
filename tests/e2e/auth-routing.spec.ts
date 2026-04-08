@@ -134,6 +134,46 @@ const slotRoster = {
   },
 }
 
+const professorStudentStats = {
+  course_code: 'CSE116',
+  course_title: 'Capstone Design A',
+  rows: [
+    {
+      student_id: '20201239',
+      student_name: 'Kim Student 06',
+      present: 0,
+      late: 0,
+      absent: 1,
+      official: 0,
+      sick: 0,
+    },
+  ],
+}
+
+const studentSemesterMatrix = {
+  course_code: 'CSE116',
+  course_title: 'Capstone Design A',
+  student_id: '20201234',
+  student_name: 'Kim Student 01',
+  weeks: [
+    {
+      week_index: 1,
+      week_start: '2026-03-02',
+      week_end: '2026-03-08',
+      slots: [
+        {
+          projection_key: projectionKey,
+          lesson_index_within_week: 1,
+          period_label: '1교시',
+          display_label: '1차시(1교시): 2026.03.03(화) Lee Professor 02(PRF002)',
+          session_date: '2026-03-03',
+          status: 'upcoming',
+        },
+      ],
+    },
+  ],
+}
+
 async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
   await page.addInitScript(() => {
     class MockWebSocket {
@@ -185,6 +225,10 @@ async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/timeline', async (route) => {
     await route.fulfill({ json: attendanceTimeline })
+  })
+
+  await page.route('**/api/professors/PRF002/courses/CSE116/attendance/student-stats', async (route) => {
+    await route.fulfill({ json: professorStudentStats })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/slot-roster?projection_key=*', async (route) => {
@@ -272,6 +316,10 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/timeline', async (route) => {
     await route.fulfill({ json: timelineResponse() })
+  })
+
+  await page.route('**/api/professors/PRF002/courses/CSE116/attendance/student-stats', async (route) => {
+    await route.fulfill({ json: professorStudentStats })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/sessions/batch', async (route) => {
@@ -421,6 +469,25 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
     })
   })
 
+  await page.route('**/api/students/20201234/courses/CSE116/attendance/semester-matrix', async (route) => {
+    await route.fulfill({
+      json: {
+        ...studentSemesterMatrix,
+        weeks: [
+          {
+            ...studentSemesterMatrix.weeks[0],
+            slots: [
+              {
+                ...studentSemesterMatrix.weeks[0].slots[0],
+                status: 'pending',
+              },
+            ],
+          },
+        ],
+      },
+    })
+  })
+
   await page.route('**/api/students/20201234/attendance/sessions/701/check-in', async (route) => {
     await route.fulfill({
       json: {
@@ -503,7 +570,7 @@ test('manual attendance selection routes to roster and shows required roster col
   await page.getByRole('button', { name: '선택 차시에 적용' }).click()
 
   await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/702\/roster$/)
-  await expect(page.getByText('번들 학생 목록 · 출석 현황')).toBeVisible()
+  await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
   await expect(page.getByText('차시별 예외 수정')).toBeVisible()
   await expect(page.getByText('Kim Student 06')).toBeVisible()
 })
@@ -516,12 +583,12 @@ test('smart attendance selection routes to timer and session stop returns to ros
   await page.getByRole('button', { name: '스마트출석' }).click()
   await page.getByRole('button', { name: '선택 차시에 적용' }).click()
 
-  await expect(page.getByText('스마트 출석 번들 진행')).toBeVisible()
+  await expect(page.getByText('스마트 출석 진행')).toBeVisible()
   await expect(page.getByText('남은 시간')).toBeVisible()
 
   await page.getByRole('button', { name: '출석 종료' }).click()
   await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/701\/roster$/)
-  await expect(page.getByText('번들 학생 목록 · 출석 현황')).toBeVisible()
+  await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
 })
 
 test('revisiting an ended smart route restores to roster instead of stale timer UI', async ({ page }) => {
@@ -539,7 +606,67 @@ test('revisiting an ended smart route restores to roster instead of stale timer 
   await page.goto(timerPath)
 
   await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/703\/roster$/)
-  await expect(page.getByText('번들 학생 목록 · 출석 현황')).toBeVisible()
+  await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
+})
+
+
+test('closing smart attendance refreshes roster state without requiring manual reload', async ({ page }) => {
+  await mockProfessorFlowApp(page)
+
+  await page.route('**/api/professors/PRF002/attendance/sessions/*/close', async (route) => {
+    await route.fulfill({
+      json: {
+        session_id: 701,
+        projection_key: projectionKey,
+        status: 'closed',
+        version: 2,
+        occurred_at: '2099-03-03T15:05:00Z',
+        course_code: 'CSE116',
+      },
+    })
+  })
+
+  await page.route('**/api/professors/PRF002/attendance/sessions/*/roster', async (route) => {
+    await route.fulfill({
+      json: {
+        session: {
+          ...slotRoster.session,
+          session_id: 701,
+          mode: 'smart',
+          status: 'closed',
+          expires_at: null,
+        },
+        students: [
+          {
+            student_id: '20201239',
+            student_name: 'Kim Student 06',
+            final_status: 'present',
+            attendance_reason: null,
+            history_count: 1,
+          },
+        ],
+        aggregate: {
+          present: 1,
+          late: 0,
+          absent: 0,
+          official: 0,
+          sick: 0,
+        },
+      },
+    })
+  })
+
+  await page.goto('/courses/CSE116/attendance')
+  await page.getByRole('button', { name: /선택$/ }).click()
+  await page.getByRole('button', { name: '스마트출석' }).click()
+  await page.getByRole('button', { name: '선택 차시에 적용' }).click()
+  await expect(page.getByText('스마트 출석 진행')).toBeVisible()
+
+  await page.getByRole('button', { name: '출석 종료' }).click()
+
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/701\/roster$/)
+  await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
+  await expect(page.locator('input[type="radio"][name="attendance-status-20201239"]').nth(0)).toBeChecked()
 })
 
 test('student attendance page shows one bundle card with one check-in action', async ({ page }) => {
@@ -547,11 +674,23 @@ test('student attendance page shows one bundle card with one check-in action', a
 
   await page.goto('/courses/CSE116/attendance')
 
-  await expect(page.getByText('스마트 출석 번들 현황')).toBeVisible()
+  await expect(page.getByText('스마트 출석 현황')).toBeVisible()
+  await expect(page.locator('.attendance-semester-table')).toBeVisible()
   await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
   await expect(page.getByText('1차시 1교시 · 2차시 2교시')).toBeVisible()
-  await expect(page.getByRole('button', { name: '번들 출석하기' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '출석하기' })).toBeVisible()
 
-  await page.getByRole('button', { name: '번들 출석하기' }).click()
+  await page.getByRole('button', { name: '출석하기' }).click()
   await expect(page.getByText('스마트 출석이 반영되었습니다.')).toBeVisible()
+})
+
+test('professor dashboard exposes per-student attendance stats table', async ({ page }) => {
+  await mockProfessorApp(page)
+
+  await page.goto('/courses/CSE116/attendance')
+  await page.getByRole('button', { name: '학생별 통계' }).click()
+
+  await expect(page.getByText('학생별 출석 누계')).toBeVisible()
+  await expect(page.locator('.attendance-stats-table')).toBeVisible()
+  await expect(page.getByText('20201239')).toBeVisible()
 })
