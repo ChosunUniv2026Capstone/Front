@@ -35,6 +35,161 @@ export type Notice = {
   created_at?: string | null
 }
 
+export type ExamSummary = {
+  id: number
+  title: string
+  description?: string | null
+  exam_type: 'quiz' | 'midterm' | 'final' | 'practice' | 'custom'
+  status: 'draft' | 'published' | 'open' | 'closed' | 'archived'
+  starts_at: string
+  ends_at: string
+  duration_minutes: number
+  requires_presence: boolean
+  late_entry_allowed?: boolean
+  auto_submit_enabled?: boolean
+  shuffle_questions?: boolean
+  shuffle_options?: boolean
+  max_attempts: number
+  question_count?: number
+  attempt_count?: number
+}
+
+export type StudentExamAvailability = {
+  code: string
+  label: string
+  can_start: boolean
+  can_submit: boolean
+}
+
+export type StudentExamAttempt = {
+  id: number
+  attempt_no: number
+  status: string
+  started_at?: string | null
+  submitted_at?: string | null
+  expires_at?: string | null
+  score?: number | null
+  total_count: number
+  answered_count: number
+}
+
+export type StudentExamSummary = ExamSummary & {
+  attempts_used: number
+  availability?: StudentExamAvailability | null
+  attempt?: StudentExamAttempt | null
+}
+
+export type ExamQuestionOption = {
+  id: number
+  option_order: number
+  option_text: string
+  is_correct?: boolean | null
+}
+
+export type StudentExamQuestion = {
+  id: number
+  question_order: number
+  question_type: 'multiple_choice' | 'true_false'
+  prompt: string
+  points: number
+  explanation?: string | null
+  is_required: boolean
+  selected_option_id?: number | null
+  options: ExamQuestionOption[]
+}
+
+export type StudentExamDetail = StudentExamSummary & {
+  questions: StudentExamQuestion[]
+}
+
+export type ExamSubmissionStart = {
+  submission_id: number
+  attempt_no: number
+  status: string
+  started_at: string
+  expires_at: string
+  idempotent: boolean
+}
+
+export type ProfessorExamDetail = ExamSummary & {
+  questions: StudentExamQuestion[]
+  submission_overview?: {
+    total_students: number
+    started_students: number
+    submitted_students: number
+    not_started_students: number
+    average_score?: number | null
+    max_score: number
+  } | null
+  submissions: Array<{
+    student_id: string
+    student_name: string
+    status: string
+    attempt_no?: number | null
+    answered_count: number
+    started_at?: string | null
+    submitted_at?: string | null
+    score?: number | null
+    max_score: number
+    total_count: number
+  }>
+}
+
+export type ProfessorExamCreatePayload = {
+  title: string
+  description?: string | null
+  exam_type: ExamSummary['exam_type']
+  starts_at: string
+  ends_at: string
+  duration_minutes: number
+  requires_presence: boolean
+  late_entry_allowed: boolean
+  auto_submit_enabled: boolean
+  shuffle_questions: boolean
+  shuffle_options: boolean
+  max_attempts: number
+  questions: Array<{
+    question_type: 'multiple_choice' | 'true_false'
+    prompt: string
+    points: number
+    explanation?: string | null
+    is_required: boolean
+    options: Array<{
+      option_text: string
+      is_correct: boolean
+    }>
+  }>
+}
+
+export type StudentExamSubmitPayload = {
+  answers: Array<{
+    question_id: number
+    selected_option_id: number | null
+    answer_text?: string | null
+  }>
+}
+
+export type StudentExamSaveAnswerPayload = {
+  selected_option_id: number | null
+  answer_text?: string | null
+}
+
+export type StudentExamSavedAnswer = {
+  submission_id: number
+  question_id: number
+  selected_option_id?: number | null
+  answer_text?: string | null
+  answered_at?: string | null
+}
+
+export type StudentExamSubmitResult = {
+  exam_id: number
+  attempt: StudentExamAttempt
+  score?: number | null
+  total_count: number
+  answered_count: number
+}
+
 export type UserSummary = {
   id: number
   role: 'student' | 'professor' | 'admin'
@@ -347,15 +502,17 @@ type RequestOptions = {
   suppressAuthFailureHandler?: boolean
 }
 
-class ApiRequestError extends Error {
+export class ApiRequestError extends Error {
   status: number
   code?: string
+  details?: Record<string, unknown> | null
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, details?: Record<string, unknown> | null) {
     super(message)
     this.name = 'ApiRequestError'
     this.status = status
     this.code = code
+    this.details = details ?? null
   }
 }
 
@@ -399,14 +556,27 @@ async function requestInternal<T>(path: string, init?: RequestInit, options: Req
   if (!response.ok) {
     const envelope = payload as ApiErrorEnvelope | undefined
     const code = envelope?.error?.code
+    const envelopeDetails = envelope?.error?.details
+    const detailMessage =
+      typeof payload === 'object' && payload && 'detail' in payload && typeof payload.detail === 'object' && payload.detail
+        ? (payload.detail as { message?: string; code?: string }).message ?? null
+        : null
+    const detailCode =
+      typeof payload === 'object' && payload && 'detail' in payload && typeof payload.detail === 'object' && payload.detail
+        ? (payload.detail as { message?: string; code?: string }).code ?? null
+        : null
+    const detailDetails =
+      typeof payload === 'object' && payload && 'detail' in payload && typeof payload.detail === 'object' && payload.detail
+        ? ((payload.detail as { details?: Record<string, unknown> }).details ?? null)
+        : null
     const message =
       typeof payload === 'string'
         ? payload
-        : envelope?.error?.message ?? payload?.detail ?? payload?.message ?? 'Request failed'
+        : envelope?.error?.message ?? detailMessage ?? payload?.message ?? 'Request failed'
     if (response.status === 401 && !options.suppressAuthFailureHandler) {
       authFailureHandler?.()
     }
-    throw new ApiRequestError(message, response.status, code)
+    throw new ApiRequestError(message, response.status, code ?? detailCode ?? undefined, envelopeDetails ?? detailDetails ?? null)
   }
 
   const successEnvelope = payload as ApiSuccessEnvelope<T> | undefined
@@ -470,6 +640,60 @@ export const api = {
     }),
   listStudentCourses: (studentId: string) => request<Course[]>(`/api/students/${studentId}/courses`),
   listProfessorCourses: (professorId: string) => request<Course[]>(`/api/professors/${professorId}/courses`),
+  listStudentExams: (studentId: string, courseCode: string) =>
+    request<StudentExamSummary[]>(`/api/students/${studentId}/courses/${courseCode}/exams`),
+  getStudentExamDetail: (studentId: string, courseCode: string, examId: number) =>
+    request<StudentExamDetail>(`/api/students/${studentId}/courses/${courseCode}/exams/${examId}`),
+  startStudentExam: (studentId: string, courseCode: string, examId: number) =>
+    request<ExamSubmissionStart>(`/api/students/${studentId}/courses/${courseCode}/exams/${examId}/start`, {
+      method: 'POST',
+    }),
+  saveStudentExamAnswer: (
+    studentId: string,
+    courseCode: string,
+    examId: number,
+    submissionId: number,
+    questionId: number,
+    payload: StudentExamSaveAnswerPayload,
+  ) =>
+    request<StudentExamSavedAnswer>(
+      `/api/students/${studentId}/courses/${courseCode}/exams/${examId}/submissions/${submissionId}/answers/${questionId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    ),
+  submitStudentExam: (studentId: string, courseCode: string, examId: number, payload: StudentExamSubmitPayload) =>
+    request<StudentExamSubmitResult>(`/api/students/${studentId}/courses/${courseCode}/exams/${examId}/submit`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listProfessorExams: (professorId: string, courseCode: string) =>
+    request<ExamSummary[]>(`/api/professors/${professorId}/courses/${courseCode}/exams`),
+  getProfessorExamDetail: (professorId: string, courseCode: string, examId: number) =>
+    request<ProfessorExamDetail>(`/api/professors/${professorId}/courses/${courseCode}/exams/${examId}`),
+  createProfessorExam: (professorId: string, courseCode: string, payload: ProfessorExamCreatePayload) =>
+    request<ProfessorExamDetail>(`/api/professors/${professorId}/courses/${courseCode}/exams`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateProfessorExam: (professorId: string, courseCode: string, examId: number, payload: ProfessorExamCreatePayload) =>
+    request<ProfessorExamDetail>(`/api/professors/${professorId}/courses/${courseCode}/exams/${examId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteProfessorExam: (professorId: string, courseCode: string, examId: number) =>
+    request<void>(`/api/professors/${professorId}/courses/${courseCode}/exams/${examId}`, {
+      method: 'DELETE',
+    }),
+  publishProfessorExam: (professorId: string, courseCode: string, examId: number) =>
+    request<ProfessorExamDetail>(`/api/professors/${professorId}/courses/${courseCode}/exams/${examId}/publish`, {
+      method: 'POST',
+    }),
+  closeProfessorExam: (professorId: string, courseCode: string, examId: number) =>
+    request<ProfessorExamDetail>(`/api/professors/${professorId}/courses/${courseCode}/exams/${examId}/close`, {
+      method: 'POST',
+    }),
   listDevices: (studentId: string) => request<Device[]>(`/api/students/${studentId}/devices`),
   createDevice: (studentId: string, payload: { label: string; mac_address: string }) =>
     request<Device>(`/api/students/${studentId}/devices`, {

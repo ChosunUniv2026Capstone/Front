@@ -1,11 +1,18 @@
-import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
+  ApiRequestError,
   type AttendanceHistory,
+  type ExamSummary,
   type ProfessorAttendanceStudentStats,
+  type ProfessorExamCreatePayload,
+  type ProfessorExamDetail,
   type AttendanceSlot,
   type AttendanceTimeline,
   type AttendanceSessionRoster,
+  type StudentExamDetail,
+  type StudentExamQuestion,
+  type StudentExamSummary,
   type StudentAttendanceSemesterMatrix,
   type AdminPresenceOverlayRequest,
   type AdminPresenceSnapshot,
@@ -52,6 +59,27 @@ type Metric = {
   tone?: 'accent' | 'neutral'
 }
 
+type ProfessorExamDraftQuestion = {
+  prompt: string
+  optionTexts: string[]
+  correctOptionOrder: number
+  points: string
+}
+
+type ProfessorExamDraft = {
+  examId: number | null
+  title: string
+  description: string
+  examType: ExamSummary['exam_type']
+  startsAt: string
+  endsAt: string
+  durationMinutes: string
+  maxAttempts: string
+  lateEntryAllowed: boolean
+  autoSubmitEnabled: boolean
+  questions: ProfessorExamDraftQuestion[]
+}
+
 const ROLE_LABEL: Record<LoginUser['role'], string> = {
   student: '학생',
   professor: '교수',
@@ -71,6 +99,128 @@ const LEARNING_KIND_LABEL: Record<LearningItem['kind'], string> = {
 
 const DEMO_DEVICE_MAC = '52:54:00:12:34:56'
 
+const EXAM_TYPE_LABEL: Record<ExamSummary['exam_type'], string> = {
+  quiz: '퀴즈',
+  midterm: '중간고사',
+  final: '기말고사',
+  practice: '연습 시험',
+  custom: '시험',
+}
+
+const EXAM_STATUS_LABEL: Record<ExamSummary['status'], string> = {
+  draft: '초안',
+  published: '게시 예정',
+  open: '진행 중',
+  closed: '종료',
+  archived: '보관',
+}
+
+function getStudentExamStatusMeta(exam: StudentExamSummary) {
+  const availabilityCode = exam.availability?.code
+  const attemptStatus = exam.attempt?.status
+
+  if (exam.status === 'closed' || availabilityCode === 'closed') {
+    return { label: '종료', tone: 'closed' as const }
+  }
+
+  if (attemptStatus && ['submitted', 'auto_submitted', 'graded'].includes(attemptStatus)) {
+    return { label: '응시 완료', tone: 'completed' as const }
+  }
+
+  if (attemptStatus === 'in_progress' || availabilityCode === 'in_progress') {
+    return { label: '응시 중', tone: 'live' as const }
+  }
+
+  if (availabilityCode === 'available' || exam.status === 'open') {
+    return { label: '응시 가능', tone: 'live' as const }
+  }
+
+  if (availabilityCode === 'upcoming' || exam.status === 'published') {
+    return { label: '공개 예정', tone: 'upcoming' as const }
+  }
+
+  if (availabilityCode === 'late_entry_blocked') {
+    return { label: '응시 불가', tone: 'blocked' as const }
+  }
+
+  if (exam.status === 'draft') {
+    return { label: '초안', tone: 'draft' as const }
+  }
+
+  return { label: EXAM_STATUS_LABEL[exam.status], tone: 'upcoming' as const }
+}
+
+function getProfessorExamStatusMeta(exam: ExamSummary) {
+  const now = Date.now()
+  const startsAt = new Date(exam.starts_at).getTime()
+  const endsAt = new Date(exam.ends_at).getTime()
+
+  if (exam.status === 'closed' || (!Number.isNaN(endsAt) && now >= endsAt)) {
+    return { label: '종료', tone: 'closed' as const }
+  }
+
+  if (
+    (exam.status === 'published' || exam.status === 'open') &&
+    !Number.isNaN(startsAt) &&
+    !Number.isNaN(endsAt) &&
+    now >= startsAt &&
+    now < endsAt
+  ) {
+    return { label: '진행 중', tone: 'live' as const }
+  }
+
+  if (exam.status === 'published') {
+    return { label: '게시 예정', tone: 'upcoming' as const }
+  }
+
+  if (exam.status === 'draft') {
+    return { label: '초안', tone: 'draft' as const }
+  }
+
+  return { label: EXAM_STATUS_LABEL[exam.status], tone: exam.status === 'open' ? 'live' as const : 'upcoming' as const }
+}
+
+function getExamSubmissionStatusMeta(status: string) {
+  switch (status) {
+    case 'in_progress':
+      return { label: '응시 중', tone: 'live' as const }
+    case 'submitted':
+      return { label: '제출 완료', tone: 'completed' as const }
+    case 'auto_submitted':
+      return { label: '자동 제출', tone: 'completed' as const }
+    case 'graded':
+      return { label: '채점 완료', tone: 'completed' as const }
+    case 'not_started':
+      return { label: '응시 전', tone: 'draft' as const }
+    default:
+      return { label: status, tone: 'upcoming' as const }
+  }
+}
+
+function getStudentAttemptDurationMinutes(exam: StudentExamSummary | StudentExamDetail) {
+  const startedAt = exam.attempt?.started_at ? new Date(exam.attempt.started_at).getTime() : Number.NaN
+  const expiresAt = exam.attempt?.expires_at ? new Date(exam.attempt.expires_at).getTime() : Number.NaN
+  if (Number.isNaN(startedAt) || Number.isNaN(expiresAt) || expiresAt <= startedAt) {
+    return null
+  }
+  return Math.ceil((expiresAt - startedAt) / 60000)
+}
+
+function getStudentExamDurationMeta(exam: StudentExamSummary | StudentExamDetail) {
+  const actualMinutes = getStudentAttemptDurationMinutes(exam)
+  if (actualMinutes != null && actualMinutes !== exam.duration_minutes) {
+    return {
+      label: '실제 응시 시간',
+      value: `${actualMinutes}분`,
+    }
+  }
+
+  return {
+    label: '응시 시간',
+    value: `${exam.duration_minutes}분`,
+  }
+}
+
 function getEligibilityReasonLabel(reasonCode?: string | null) {
   switch (reasonCode) {
     case 'OK':
@@ -78,7 +228,7 @@ function getEligibilityReasonLabel(reasonCode?: string | null) {
     case 'OUTSIDE_CLASS_WINDOW':
       return '현재 수업 시간이 아니어서 확인이 제한되었습니다.'
     case 'DEVICE_NOT_REGISTERED':
-      return '등록된 단말 정보가 없어 재실 판정을 진행할 수 없습니다.'
+      return '등록된 활성 단말이 없어 시험 또는 출석 확인을 진행할 수 없습니다.'
     case 'DEVICE_NOT_PRESENT':
       return '등록 단말이 현재 강의실 네트워크에서 관측되지 않았습니다.'
     default:
@@ -145,6 +295,161 @@ function formatDateTime(value?: string | null) {
   const minutes = String(parsed.getMinutes()).padStart(2, '0')
   const seconds = String(parsed.getSeconds()).padStart(2, '0')
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+function formatExamDateTime(value?: string | null) {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  const year = String(parsed.getFullYear())
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  const hours = String(parsed.getHours()).padStart(2, '0')
+  const minutes = String(parsed.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}`
+}
+
+function formatExamWindow(startsAt?: string | null, endsAt?: string | null) {
+  if (!startsAt || !endsAt) return '-'
+  const start = new Date(startsAt)
+  const end = new Date(endsAt)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return `${startsAt} ~ ${endsAt}`
+  }
+
+  const sameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate()
+
+  const startText = formatExamDateTime(startsAt)
+  if (!sameDay) {
+    return `${startText} ~ ${formatExamDateTime(endsAt)}`
+  }
+
+  const endHours = String(end.getHours()).padStart(2, '0')
+  const endMinutes = String(end.getMinutes()).padStart(2, '0')
+  return `${startText} ~ ${endHours}:${endMinutes}`
+}
+
+function toDateTimeLocalInputValue(value?: string | Date | null) {
+  if (!value) return ''
+  const parsed = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  const hours = String(parsed.getHours()).padStart(2, '0')
+  const minutes = String(parsed.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+function toApiDateTime(value: string) {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toISOString()
+}
+
+function createDefaultProfessorExamQuestion(): ProfessorExamDraftQuestion {
+  return {
+    prompt: '',
+    optionTexts: ['', '', '', ''],
+    correctOptionOrder: 1,
+    points: '5',
+  }
+}
+
+function getExamStartErrorMessage(error: unknown) {
+  if (error instanceof ApiRequestError && error.code === 'PRESENCE_INELIGIBLE') {
+    const reasonCode =
+      typeof error.details?.reason_code === 'string'
+        ? error.details.reason_code
+        : typeof error.details?.reasonCode === 'string'
+          ? error.details.reasonCode
+          : null
+    if (reasonCode === 'DEVICE_NOT_REGISTERED') {
+      return '등록된 단말이 아닙니다. 단말기기를 등록해주세요.'
+    }
+    return `시험 시작 조건을 충족하지 못했습니다. ${getEligibilityReasonLabel(reasonCode)}`
+  }
+
+  return error instanceof Error ? error.message : '시험 응시를 시작하지 못했습니다.'
+}
+
+function createDefaultProfessorExamDraft(): ProfessorExamDraft {
+  const startsAt = new Date()
+  startsAt.setMinutes(Math.ceil(startsAt.getMinutes() / 10) * 10, 0, 0)
+  const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000)
+
+  return {
+    examId: null,
+    title: '',
+    description: '',
+    examType: 'midterm',
+    startsAt: toDateTimeLocalInputValue(startsAt),
+    endsAt: toDateTimeLocalInputValue(endsAt),
+    durationMinutes: '60',
+    maxAttempts: '1',
+    lateEntryAllowed: true,
+    autoSubmitEnabled: true,
+    questions: [createDefaultProfessorExamQuestion()],
+  }
+}
+
+function normalizeProfessorEditableExamType(examType: ExamSummary['exam_type']): ProfessorExamDraft['examType'] {
+  return examType === 'final' ? 'final' : 'midterm'
+}
+
+function toProfessorExamPayload(draft: ProfessorExamDraft): ProfessorExamCreatePayload {
+  return {
+    title: draft.title.trim(),
+    description: draft.description.trim() || null,
+    exam_type: draft.examType,
+    starts_at: toApiDateTime(draft.startsAt),
+    ends_at: toApiDateTime(draft.endsAt),
+    duration_minutes: Number(draft.durationMinutes) || 60,
+    requires_presence: true,
+    late_entry_allowed: draft.lateEntryAllowed,
+    auto_submit_enabled: draft.autoSubmitEnabled,
+    shuffle_questions: false,
+    shuffle_options: false,
+    max_attempts: Math.max(1, Number(draft.maxAttempts) || 1),
+    questions: draft.questions.map((question) => ({
+        question_type: 'multiple_choice',
+        prompt: question.prompt.trim(),
+        points: Math.max(1, Number(question.points) || 1),
+        explanation: null,
+        is_required: true,
+        options: question.optionTexts.map((optionText, index) => ({
+          option_text: optionText.trim(),
+          is_correct: index + 1 === question.correctOptionOrder,
+        })),
+      })),
+  }
+}
+
+function loadProfessorExamIntoDraft(detail: ProfessorExamDetail): ProfessorExamDraft {
+  return {
+    examId: detail.id,
+    title: detail.title,
+    description: detail.description ?? '',
+    examType: normalizeProfessorEditableExamType(detail.exam_type),
+    startsAt: toDateTimeLocalInputValue(detail.starts_at),
+    endsAt: toDateTimeLocalInputValue(detail.ends_at),
+    durationMinutes: String(detail.duration_minutes),
+    maxAttempts: String(detail.max_attempts),
+    lateEntryAllowed: detail.late_entry_allowed ?? false,
+    autoSubmitEnabled: detail.auto_submit_enabled ?? false,
+    questions:
+      detail.questions.length > 0
+        ? detail.questions.map((question) => ({
+            prompt: question.prompt ?? '',
+            optionTexts: Array.from({ length: 4 }, (_, index) => question.options[index]?.option_text ?? ''),
+            correctOptionOrder: question.options.find((option) => option.is_correct)?.option_order ?? 1,
+            points: String(question.points ?? 5),
+          }))
+        : [createDefaultProfessorExamQuestion()],
+  }
 }
 
 function SectionCard({
@@ -230,6 +535,18 @@ function App() {
   const [studentAttendanceSessions, setStudentAttendanceSessions] = useState<
     Awaited<ReturnType<typeof api.listStudentActiveAttendanceSessions>>['sessions']
   >([])
+  const [studentExams, setStudentExams] = useState<StudentExamSummary[]>([])
+  const [studentExamDetail, setStudentExamDetail] = useState<StudentExamDetail | null>(null)
+  const [studentExamQuestionIndex, setStudentExamQuestionIndex] = useState(0)
+  const [studentExamSubmitWarning, setStudentExamSubmitWarning] = useState<number[]>([])
+  const [studentExamAutoSubmittingId, setStudentExamAutoSubmittingId] = useState<number | null>(null)
+  const [professorExams, setProfessorExams] = useState<ExamSummary[]>([])
+  const [professorExamDetail, setProfessorExamDetail] = useState<ProfessorExamDetail | null>(null)
+  const [professorExamDraft, setProfessorExamDraft] = useState<ProfessorExamDraft>(() => createDefaultProfessorExamDraft())
+  const [examLoading, setExamLoading] = useState(false)
+  const [examBusyKey, setExamBusyKey] = useState<string | null>(null)
+  const [examMessage, setExamMessage] = useState<string | null>(null)
+  const [examNow, setExamNow] = useState(Date.now())
   const [attendanceLoading, setAttendanceLoading] = useState(false)
   const [attendanceMessage, setAttendanceMessage] = useState<string | null>(null)
   const [attendanceModalOpen, setAttendanceModalOpen] = useState(false)
@@ -260,6 +577,8 @@ function App() {
     : 'timeline'
   const routeProjectionKey = route.kind === 'course' && route.section === 'attendance' ? route.projectionKey ?? null : null
   const routeSessionId = route.kind === 'course' && route.section === 'attendance' ? route.sessionId ?? null : null
+  const routeExamId = route.kind === 'course' && route.section === 'exams' ? route.examId ?? null : null
+  const inStudentExamMode = route.kind === 'course' && route.section === 'exams' && route.examMode === 'take' && currentUser?.role === 'student'
 
   const isStudent = currentUser?.role === 'student'
   const isProfessor = currentUser?.role === 'professor'
@@ -639,6 +958,17 @@ function App() {
   function openCourse(course: Course) {
     setSelectedCourse(course)
     setEligibility(null)
+    setStudentExams([])
+    setStudentExamDetail(null)
+    setStudentExamSubmitWarning([])
+    setStudentExamAutoSubmittingId(null)
+    setProfessorExams([])
+    setProfessorExamDetail(null)
+    setProfessorExamDraft(createDefaultProfessorExamDraft())
+    setExamMessage(null)
+    setStudentExamQuestionIndex(0)
+    setStudentExamSubmitWarning([])
+    setStudentExamAutoSubmittingId(null)
     setAttendanceTimeline(null)
     setAttendanceRoster(null)
     setAttendanceHistory(null)
@@ -970,6 +1300,374 @@ function App() {
     return () => socket.close()
   }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
 
+  async function loadStudentExamList(courseCode = selectedCourse?.course_code) {
+    if (!currentUser || currentUser.role !== 'student' || !courseCode) return
+    const nextExams = await api.listStudentExams(currentUser.login_id, courseCode)
+    setStudentExams(nextExams)
+  }
+
+  async function loadProfessorExamList(courseCode = selectedCourse?.course_code) {
+    if (!currentUser || currentUser.role !== 'professor' || !courseCode) return
+    const nextExams = await api.listProfessorExams(currentUser.login_id, courseCode)
+    setProfessorExams(nextExams)
+  }
+
+  async function openStudentExamDetail(examId: number, options?: { navigateToDetail?: boolean }) {
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
+    setExamLoading(true)
+    try {
+      setError(null)
+      const detail = await api.getStudentExamDetail(currentUser.login_id, selectedCourse.course_code, examId)
+      setStudentExamDetail(detail)
+      setStudentExamQuestionIndex(0)
+      setStudentExamSubmitWarning([])
+      setStudentExamAutoSubmittingId(null)
+      if (options?.navigateToDetail !== false) {
+        navigate({
+          kind: 'course',
+          courseCode: selectedCourse.course_code,
+          section: 'exams',
+          examId,
+        }, { replace: true })
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '시험 상세를 불러오지 못했습니다.')
+    } finally {
+      setExamLoading(false)
+    }
+  }
+
+  async function openProfessorExamDetail(examId: number, options?: { loadIntoDraft?: boolean }) {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    setExamLoading(true)
+    try {
+      setError(null)
+      const detail = await api.getProfessorExamDetail(currentUser.login_id, selectedCourse.course_code, examId)
+      setProfessorExamDetail(detail)
+      if (options?.loadIntoDraft) {
+        setProfessorExamDraft(loadProfessorExamIntoDraft(detail))
+      }
+      navigate({
+        kind: 'course',
+        courseCode: selectedCourse.course_code,
+        section: 'exams',
+        examId,
+      }, { replace: true })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '교수 시험 상세를 불러오지 못했습니다.')
+    } finally {
+      setExamLoading(false)
+    }
+  }
+
+  function resetProfessorExamDraftForm() {
+    setProfessorExamDraft(createDefaultProfessorExamDraft())
+  }
+
+  function updateProfessorExamDraft<K extends keyof ProfessorExamDraft>(key: K, value: ProfessorExamDraft[K]) {
+    setProfessorExamDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  function updateProfessorExamQuestion(
+    questionIndex: number,
+    key: keyof ProfessorExamDraftQuestion,
+    value: ProfessorExamDraftQuestion[keyof ProfessorExamDraftQuestion],
+  ) {
+    setProfessorExamDraft((current) => ({
+      ...current,
+      questions: current.questions.map((question, currentIndex) =>
+        currentIndex === questionIndex ? { ...question, [key]: value } : question,
+      ),
+    }))
+  }
+
+  function updateProfessorExamOption(questionIndex: number, optionIndex: number, value: string) {
+    setProfessorExamDraft((current) => ({
+      ...current,
+      questions: current.questions.map((question, currentIndex) =>
+        currentIndex === questionIndex
+          ? {
+              ...question,
+              optionTexts: question.optionTexts.map((item, itemIndex) => (itemIndex === optionIndex ? value : item)),
+            }
+          : question,
+      ),
+    }))
+  }
+
+  function addProfessorExamQuestion() {
+    setProfessorExamDraft((current) => ({
+      ...current,
+      questions: [...current.questions, createDefaultProfessorExamQuestion()],
+    }))
+  }
+
+  function removeProfessorExamQuestion(questionIndex: number) {
+    setProfessorExamDraft((current) => ({
+      ...current,
+      questions:
+        current.questions.length <= 1
+          ? current.questions
+          : current.questions.filter((_, currentIndex) => currentIndex !== questionIndex),
+    }))
+  }
+
+  async function handleProfessorExamSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+
+    const payload = toProfessorExamPayload(professorExamDraft)
+    if (
+      !payload.title ||
+      payload.questions.length === 0 ||
+      payload.questions.some((question) => !question.prompt || question.options.some((option) => !option.option_text))
+    ) {
+      setError('시험명과 모든 문항, 보기 4개를 빠짐없이 입력해주세요.')
+      return
+    }
+
+    setExamBusyKey('draft-submit')
+    try {
+      setError(null)
+      setExamMessage(null)
+      if (professorExamDraft.examId) {
+        const detail = await api.updateProfessorExam(currentUser.login_id, selectedCourse.course_code, professorExamDraft.examId, payload)
+        setProfessorExamDetail(detail)
+        setProfessorExamDraft(loadProfessorExamIntoDraft(detail))
+        setExamMessage('시험 초안을 수정했습니다.')
+      } else {
+        const detail = await api.createProfessorExam(currentUser.login_id, selectedCourse.course_code, payload)
+        setProfessorExamDetail(detail)
+        setProfessorExamDraft(loadProfessorExamIntoDraft(detail))
+        setExamMessage('시험 초안을 만들었습니다.')
+      }
+      await loadProfessorExamList(selectedCourse.course_code)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '시험 초안을 저장하지 못했습니다.')
+    } finally {
+      setExamBusyKey(null)
+    }
+  }
+
+  async function handleProfessorExamDelete(examId: number) {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    setExamBusyKey(`delete-${examId}`)
+    try {
+      setError(null)
+      await api.deleteProfessorExam(currentUser.login_id, selectedCourse.course_code, examId)
+      setProfessorExamDetail((current) => (current?.id === examId ? null : current))
+      if (professorExamDraft.examId === examId) {
+        resetProfessorExamDraftForm()
+      }
+      await loadProfessorExamList(selectedCourse.course_code)
+      navigate({
+        kind: 'course',
+        courseCode: selectedCourse.course_code,
+        section: 'exams',
+      }, { replace: true })
+      setExamMessage('시험을 삭제했습니다.')
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '시험을 삭제하지 못했습니다.')
+    } finally {
+      setExamBusyKey(null)
+    }
+  }
+
+  async function handleProfessorExamStatusAction(examId: number, action: 'publish' | 'close') {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    setExamBusyKey(`${action}-${examId}`)
+    try {
+      setError(null)
+      const detail =
+        action === 'publish'
+          ? await api.publishProfessorExam(currentUser.login_id, selectedCourse.course_code, examId)
+          : await api.closeProfessorExam(currentUser.login_id, selectedCourse.course_code, examId)
+      setProfessorExamDetail(detail)
+      await loadProfessorExamList(selectedCourse.course_code)
+      setExamMessage(action === 'publish' ? '시험을 게시했습니다.' : '시험을 종료했습니다.')
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '시험 상태를 변경하지 못했습니다.')
+    } finally {
+      setExamBusyKey(null)
+    }
+  }
+
+  async function handleStudentExamStart(examId: number) {
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
+    setExamBusyKey(`start-${examId}`)
+    try {
+      setError(null)
+      await api.startStudentExam(currentUser.login_id, selectedCourse.course_code, examId)
+      await loadStudentExamList(selectedCourse.course_code)
+      await openStudentExamDetail(examId, { navigateToDetail: false })
+      navigate({
+        kind: 'course',
+        courseCode: selectedCourse.course_code,
+        section: 'exams',
+        examId,
+        examMode: 'take',
+      })
+    } catch (caughtError) {
+      setError(getExamStartErrorMessage(caughtError))
+    } finally {
+      setExamBusyKey(null)
+    }
+  }
+
+  async function handleStudentExamOptionSelect(question: StudentExamQuestion, selectedOptionId: number) {
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse || !studentExamDetail?.attempt?.id) return
+    setStudentExamSubmitWarning([])
+    setStudentExamDetail((current) =>
+      current
+        ? {
+            ...current,
+            questions: current.questions.map((item) =>
+              item.id === question.id ? { ...item, selected_option_id: selectedOptionId } : item,
+            ),
+          }
+        : current,
+    )
+    setExamBusyKey(`answer-${question.id}`)
+    try {
+      await api.saveStudentExamAnswer(
+        currentUser.login_id,
+        selectedCourse.course_code,
+        studentExamDetail.id,
+        studentExamDetail.attempt.id,
+        question.id,
+        { selected_option_id: selectedOptionId },
+      )
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '답안을 저장하지 못했습니다.')
+    } finally {
+      setExamBusyKey(null)
+    }
+  }
+
+  async function handleStudentExamSubmit(options?: { skipUnansweredCheck?: boolean; auto?: boolean }) {
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse || !studentExamDetail) return
+    if (!options?.skipUnansweredCheck) {
+      const unansweredQuestions = studentExamDetail.questions
+        .filter((question) => question.selected_option_id == null)
+        .map((question) => question.question_order)
+      if (unansweredQuestions.length > 0) {
+        setStudentExamQuestionIndex(
+          Math.max(
+            0,
+            studentExamDetail.questions.findIndex((question) => question.question_order === unansweredQuestions[0]),
+          ),
+        )
+        setStudentExamSubmitWarning(unansweredQuestions)
+        return
+      }
+    }
+    setExamBusyKey(`submit-${studentExamDetail.id}`)
+    try {
+      setError(null)
+      setStudentExamSubmitWarning([])
+      if (options?.auto) {
+        setStudentExamAutoSubmittingId(studentExamDetail.id)
+      }
+      await api.submitStudentExam(currentUser.login_id, selectedCourse.course_code, studentExamDetail.id, {
+        answers: studentExamDetail.questions.map((question) => ({
+          question_id: question.id,
+          selected_option_id: question.selected_option_id ?? null,
+          answer_text: null,
+        })),
+      })
+      await loadStudentExamList(selectedCourse.course_code)
+      await openStudentExamDetail(studentExamDetail.id, { navigateToDetail: false })
+      navigate({
+        kind: 'course',
+        courseCode: selectedCourse.course_code,
+        section: 'exams',
+        examId: studentExamDetail.id,
+      }, { replace: true })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '답안을 제출하지 못했습니다.')
+    } finally {
+      setExamBusyKey(null)
+      if (options?.auto) {
+        setStudentExamAutoSubmittingId(null)
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (courseSection !== 'exams' || !selectedCourse || !currentUser) return
+    let cancelled = false
+
+    ;(async () => {
+      setExamLoading(true)
+      try {
+        if (currentUser.role === 'student') {
+          const nextExams = await api.listStudentExams(currentUser.login_id, selectedCourse.course_code)
+          if (cancelled) return
+          setStudentExams(nextExams)
+          if (routeExamId) {
+            const detail = await api.getStudentExamDetail(currentUser.login_id, selectedCourse.course_code, routeExamId)
+            if (cancelled) return
+            setStudentExamDetail(detail)
+            setStudentExamQuestionIndex(0)
+          } else {
+            setStudentExamDetail(null)
+          }
+        } else if (currentUser.role === 'professor') {
+          const nextExams = await api.listProfessorExams(currentUser.login_id, selectedCourse.course_code)
+          if (cancelled) return
+          setProfessorExams(nextExams)
+          if (routeExamId) {
+            const detail = await api.getProfessorExamDetail(currentUser.login_id, selectedCourse.course_code, routeExamId)
+            if (cancelled) return
+            setProfessorExamDetail(detail)
+          } else {
+            setProfessorExamDetail(null)
+          }
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setError(caughtError instanceof Error ? caughtError.message : '시험 정보를 불러오지 못했습니다.')
+        }
+      } finally {
+        if (!cancelled) {
+          setExamLoading(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [courseSection, currentUser, routeExamId, selectedCourse])
+
+  useEffect(() => {
+    if (!inStudentExamMode) return
+    const timer = window.setInterval(() => setExamNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [inStudentExamMode])
+
+  useEffect(() => {
+    if (!inStudentExamMode) return
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [inStudentExamMode])
+
+  useEffect(() => {
+    if (!inStudentExamMode || !studentExamDetail || studentExamDetail.attempt?.status !== 'in_progress') return
+    if (!studentExamDetail.auto_submit_enabled) return
+    if (examBusyKey === `submit-${studentExamDetail.id}` || studentExamAutoSubmittingId === studentExamDetail.id) return
+
+    const targetEnd = studentExamDetail.attempt?.expires_at ?? studentExamDetail.ends_at ?? null
+    if (!targetEnd) return
+    if (new Date(targetEnd).getTime() > examNow) return
+
+    void handleStudentExamSubmit({ skipUnansweredCheck: true, auto: true })
+  }, [courseSection, currentUser, examBusyKey, examNow, inStudentExamMode, selectedCourse, studentExamAutoSubmittingId, studentExamDetail])
+
   function handleAddLearningItem(event: FormEvent) {
     event.preventDefault()
     if (!selectedCourse || !currentUser || currentUser.role !== 'professor') return
@@ -1068,7 +1766,12 @@ function App() {
       return
     }
 
-    const nextCourse = courses.find((course) => course.course_code === route.courseCode)
+    const routeCourseCode = (route as { courseCode?: string }).courseCode ?? null
+    if (!routeCourseCode) {
+      return
+    }
+
+    const nextCourse = courses.find((course) => course.course_code === routeCourseCode)
     if (!nextCourse) {
       setError('해당 강의 경로에 접근할 수 없습니다.')
       navigateToDefault(currentUser, { replace: true })
@@ -1077,6 +1780,13 @@ function App() {
 
     if (selectedCourse?.course_code !== nextCourse.course_code) {
       setEligibility(null)
+      setStudentExams([])
+      setStudentExamDetail(null)
+      setProfessorExams([])
+      setProfessorExamDetail(null)
+      setProfessorExamDraft(createDefaultProfessorExamDraft())
+      setExamMessage(null)
+      setStudentExamQuestionIndex(0)
       setAttendanceTimeline(null)
       setAttendanceRoster(null)
       setAttendanceHistory(null)
@@ -1232,15 +1942,14 @@ function App() {
     const commonItems: Array<{ id: CourseSection; label: string }> = [
       { id: 'overview', label: '강의 홈' },
       { id: 'content', label: '자료·영상' },
-      { id: 'notices', label: '공지사항' },
     ]
 
     if (isStudent) {
-      return [...commonItems, { id: 'attendance', label: '출석 · 시험 확인' }]
+      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 확인' }]
     }
 
     if (isProfessor) {
-      return [...commonItems, { id: 'attendance', label: '출석 탭' }, { id: 'manage', label: '강의 운영' }]
+      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 탭' }, { id: 'manage', label: '강의 운영' }]
     }
 
     return commonItems
@@ -2926,6 +3635,574 @@ function App() {
     )
   }
 
+  function renderStudentExamSection() {
+    return (
+      <div className="course-stack exam-space exam-space--student">
+        <SectionCard
+          title="응시 가능한 시험"
+          action={<span className="info-chip">총 {studentExams.length}건</span>}
+        >
+          {examLoading ? <p className="empty-state">시험 정보를 불러오는 중입니다.</p> : null}
+          {!examLoading && studentExams.length === 0 ? <p className="empty-state">현재 확인 가능한 시험이 없습니다.</p> : null}
+          {studentExams.length > 0 ? (
+            <div className="exam-list-grid">
+              {studentExams.map((exam) => (
+                <article key={exam.id} className="exam-list-card exam-list-card--student">
+                  {(() => {
+                    const statusMeta = getStudentExamStatusMeta(exam)
+                    const durationMeta = getStudentExamDurationMeta(exam)
+                    return (
+                      <>
+                  <div className="exam-list-card-top">
+                    <div className="exam-card-copy">
+                      <span className="caption-text">{selectedCourse?.course_code}</span>
+                      <h4>{exam.title}</h4>
+                      {exam.description ? <p>{exam.description}</p> : null}
+                    </div>
+                    <span className={`status-pill status-pill--${statusMeta.tone}`}>
+                      {statusMeta.label}
+                    </span>
+                  </div>
+                  <div className="exam-fact-grid">
+                    <article className="exam-fact-card">
+                      <span>시험 구분</span>
+                      <strong>{EXAM_TYPE_LABEL[exam.exam_type]}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>{durationMeta.label}</span>
+                      <strong>{durationMeta.value}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>응시 현황</span>
+                      <strong>{exam.attempts_used}/{exam.max_attempts}</strong>
+                    </article>
+                    <article className="exam-fact-card exam-fact-card--wide">
+                      <span>시험 일정</span>
+                      <strong>{formatExamWindow(exam.starts_at, exam.ends_at)}</strong>
+                    </article>
+                  </div>
+                  <div className="exam-detail-actions">
+                    {(exam.availability?.can_start ?? false) || exam.attempt?.status === 'in_progress' ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleStudentExamStart(exam.id)}
+                        disabled={examBusyKey === `start-${exam.id}`}
+                      >
+                        {exam.attempt?.status === 'in_progress' ? '응시 이어하기' : '응시 시작'}
+                      </button>
+                    ) : null}
+                  </div>
+                      </>
+                    )
+                  })()}
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </SectionCard>
+      </div>
+    )
+  }
+
+  function renderProfessorExamSection() {
+    const isEditing = professorExamDraft.examId != null
+    return (
+      <div className="course-stack exam-space">
+        {examMessage ? <p className="banner">{examMessage}</p> : null}
+        <SectionCard title={isEditing ? '시험 편집' : '시험 작성'}>
+          <form className="stack exam-form-shell" onSubmit={handleProfessorExamSubmit}>
+            <div className="exam-form-grid">
+              <section className="exam-form-section">
+                <div className="exam-form-section-head">
+                  <strong>기본 정보</strong>
+                  <span className="caption-text">시험명과 시험 종류를 먼저 정리합니다.</span>
+                </div>
+                <div className="exam-form-grid exam-form-grid--compact">
+                  <label>
+                    시험명
+                    <input
+                      value={professorExamDraft.title}
+                      onChange={(event) => updateProfessorExamDraft('title', event.target.value)}
+                      placeholder="예: 자료구조 중간고사"
+                    />
+                  </label>
+                  <label>
+                    시험 구분
+                    <select
+                      value={professorExamDraft.examType}
+                      onChange={(event) => updateProfessorExamDraft('examType', event.target.value as ProfessorExamDraft['examType'])}
+                    >
+                      <option value="midterm">중간고사</option>
+                      <option value="final">기말고사</option>
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  설명
+                  <textarea
+                    value={professorExamDraft.description}
+                    onChange={(event) => updateProfessorExamDraft('description', event.target.value)}
+                    rows={3}
+                    placeholder="학생에게 보여줄 간단한 안내를 입력하세요."
+                  />
+                </label>
+              </section>
+
+              <section className="exam-form-section">
+                <div className="exam-form-section-head">
+                  <strong>일정 및 응시 설정</strong>
+                </div>
+                <div className="exam-form-stack">
+                  <label>
+                    시작 시각
+                    <input
+                      type="datetime-local"
+                      value={professorExamDraft.startsAt}
+                      onChange={(event) => updateProfessorExamDraft('startsAt', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    종료 시각
+                    <input
+                      type="datetime-local"
+                      value={professorExamDraft.endsAt}
+                      onChange={(event) => updateProfessorExamDraft('endsAt', event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="exam-form-grid exam-form-grid--compact">
+                  <label>
+                    시험 시간(분)
+                    <input
+                      value={professorExamDraft.durationMinutes}
+                      onChange={(event) => updateProfessorExamDraft('durationMinutes', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    최대 응시 횟수
+                    <input
+                      value={professorExamDraft.maxAttempts}
+                      onChange={(event) => updateProfessorExamDraft('maxAttempts', event.target.value)}
+                    />
+                  </label>
+                </div>
+              </section>
+            </div>
+
+            <div className="exam-toggle-row">
+              <label className="exam-toggle-card">
+                <span>지각 입장 허용</span>
+                <input
+                  type="checkbox"
+                  checked={professorExamDraft.lateEntryAllowed}
+                  onChange={(event) => updateProfessorExamDraft('lateEntryAllowed', event.target.checked)}
+                />
+              </label>
+              <label className="exam-toggle-card">
+                <span>자동 제출 사용</span>
+                <input
+                  type="checkbox"
+                  checked={professorExamDraft.autoSubmitEnabled}
+                  onChange={(event) => updateProfessorExamDraft('autoSubmitEnabled', event.target.checked)}
+                />
+              </label>
+            </div>
+
+            <div className="exam-builder-list">
+              {professorExamDraft.questions.map((question, questionIndex) => (
+                <article key={questionIndex} className="exam-builder-card">
+                  <header className="exam-builder-card-head">
+                    <div>
+                      <h4>기본 객관식 문항</h4>
+                    </div>
+                    <div className="exam-builder-actions">
+                      <span className="info-chip">{professorExamDraft.questions.length}문항</span>
+                      {professorExamDraft.questions.length > 1 ? (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => removeProfessorExamQuestion(questionIndex)}
+                        >
+                          문항 삭제
+                        </button>
+                      ) : null}
+                    </div>
+                  </header>
+                  <div className="stack">
+                    <label>
+                      문제
+                      <textarea
+                        value={question.prompt}
+                        onChange={(event) => updateProfessorExamQuestion(questionIndex, 'prompt', event.target.value)}
+                        rows={3}
+                        placeholder="문항 내용을 입력하세요."
+                      />
+                    </label>
+                    <div className="detail-grid">
+                      <label>
+                        배점
+                        <input
+                          value={question.points}
+                          onChange={(event) => updateProfessorExamQuestion(questionIndex, 'points', event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        정답 보기
+                        <select
+                          value={question.correctOptionOrder}
+                          onChange={(event) =>
+                            updateProfessorExamQuestion(questionIndex, 'correctOptionOrder', Number(event.target.value))
+                          }
+                        >
+                          {[1, 2, 3, 4].map((order) => (
+                            <option key={order} value={order}>{order}번</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="exam-option-list">
+                      {question.optionTexts.map((optionText, optionIndex) => (
+                        <label key={optionIndex}>
+                          보기 {optionIndex + 1}
+                          <input
+                            value={optionText}
+                            onChange={(event) => updateProfessorExamOption(questionIndex, optionIndex, event.target.value)}
+                            placeholder={`보기 ${optionIndex + 1}`}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <div className="exam-detail-actions">
+              <button type="button" className="secondary-button" onClick={addProfessorExamQuestion}>
+                문항 추가
+              </button>
+              <button type="submit" disabled={examBusyKey === 'draft-submit'}>
+                {isEditing ? '변경 저장' : '초안 저장'}
+              </button>
+              {isEditing ? (
+                <button type="button" className="secondary-button" onClick={resetProfessorExamDraftForm}>
+                  새 초안 작성
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </SectionCard>
+
+        <SectionCard title="시험 목록" action={<span className="info-chip">{professorExams.length}건</span>}>
+          {examLoading ? <p className="empty-state">시험 목록을 불러오는 중입니다.</p> : null}
+          {!examLoading && professorExams.length === 0 ? <p className="empty-state">등록된 시험이 없습니다.</p> : null}
+          {professorExams.length > 0 ? (
+            <div className="exam-list-grid">
+              {professorExams.map((exam) => (
+                <article key={exam.id} className="exam-list-card exam-list-card--professor">
+                  {(() => {
+                    const statusMeta = getProfessorExamStatusMeta(exam)
+                    return (
+                      <>
+                  <div className="exam-list-card-top">
+                    <div className="exam-card-copy">
+                      <span className="caption-text">{selectedCourse?.course_code}</span>
+                      <h4>{exam.title}</h4>
+                    </div>
+                    <span className={`status-pill status-pill--${statusMeta.tone}`}>
+                      {statusMeta.label}
+                    </span>
+                  </div>
+                  <p>{exam.description || '설명이 아직 없습니다.'}</p>
+                  <div className="exam-fact-grid">
+                    <article className="exam-fact-card">
+                      <span>시험 구분</span>
+                      <strong>{EXAM_TYPE_LABEL[exam.exam_type]}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>응시 시간</span>
+                      <strong>{exam.duration_minutes}분</strong>
+                    </article>
+                    <article className="exam-fact-card exam-fact-card--wide">
+                      <span>시험 일정</span>
+                      <strong>{formatExamWindow(exam.starts_at, exam.ends_at)}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>응시 횟수</span>
+                      <strong>{exam.max_attempts}회</strong>
+                    </article>
+                  </div>
+                  <div className="exam-detail-actions">
+                    <button type="button" className="text-button" onClick={() => void openProfessorExamDetail(exam.id)}>
+                      상세 보기
+                    </button>
+                    {exam.status === 'draft' ? (
+                      <button type="button" className="text-button" onClick={() => void openProfessorExamDetail(exam.id, { loadIntoDraft: true })}>
+                        편집
+                      </button>
+                    ) : null}
+                  </div>
+                      </>
+                    )
+                  })()}
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {professorExamDetail ? (
+          <SectionCard
+            title={`시험 상세 · ${professorExamDetail.title}`}
+            action={(() => {
+              const statusMeta = getProfessorExamStatusMeta(professorExamDetail)
+              return <span className={`status-pill status-pill--${statusMeta.tone}`}>{statusMeta.label}</span>
+            })()}
+          >
+            <div className="exam-detail-grid">
+              <article className="exam-detail-panel exam-detail-panel--summary">
+                <div className="exam-fact-grid">
+                  <article className="exam-fact-card">
+                    <span>시험 구분</span>
+                    <strong>{EXAM_TYPE_LABEL[professorExamDetail.exam_type]}</strong>
+                  </article>
+                  <article className="exam-fact-card">
+                    <span>응시 시간</span>
+                    <strong>{professorExamDetail.duration_minutes}분</strong>
+                  </article>
+                  <article className="exam-fact-card exam-fact-card--wide">
+                    <span>시험 일정</span>
+                    <strong>{formatExamWindow(professorExamDetail.starts_at, professorExamDetail.ends_at)}</strong>
+                  </article>
+                  <article className="exam-fact-card">
+                    <span>재실 확인</span>
+                    <strong>{professorExamDetail.requires_presence ? '사용' : '미사용'}</strong>
+                  </article>
+                  <article className="exam-fact-card">
+                    <span>응시 횟수</span>
+                    <strong>{professorExamDetail.max_attempts}회</strong>
+                  </article>
+                </div>
+                <div className="exam-detail-actions">
+                  {professorExamDetail.status === 'draft' ? (
+                    <>
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => void handleProfessorExamStatusAction(professorExamDetail.id, 'publish')}
+                        disabled={examBusyKey === `publish-${professorExamDetail.id}`}
+                      >
+                        공개
+                      </button>
+                    </>
+                  ) : null}
+                  {(professorExamDetail.status === 'published' || professorExamDetail.status === 'open') ? (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => void handleProfessorExamStatusAction(professorExamDetail.id, 'close')}
+                      disabled={examBusyKey === `close-${professorExamDetail.id}`}
+                    >
+                      종료
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="text-button exam-action-link--danger"
+                    onClick={() => void handleProfessorExamDelete(professorExamDetail.id)}
+                    disabled={examBusyKey === `delete-${professorExamDetail.id}`}
+                  >
+                    삭제
+                  </button>
+                </div>
+              </article>
+
+              <article className="exam-detail-panel exam-detail-panel--submissions">
+                <header className="section-head">
+                  <h3>응시 현황</h3>
+                  <span className="caption-text">{professorExamDetail.submissions.length}명</span>
+                </header>
+                {professorExamDetail.submission_overview ? (
+                  <div className="exam-metric-grid">
+                    <article className="metric-card"><strong>{professorExamDetail.submission_overview.started_students}</strong><span>응시 시작</span></article>
+                    <article className="metric-card"><strong>{professorExamDetail.submission_overview.submitted_students}</strong><span>제출 완료</span></article>
+                    <article className="metric-card"><strong>{professorExamDetail.submission_overview.average_score ?? '-'}</strong><span>평균 점수</span></article>
+                  </div>
+                ) : null}
+                <div className="exam-submission-list">
+                  {professorExamDetail.submissions.map((submission) => (
+                    <article key={`${submission.student_id}-${submission.attempt_no ?? 0}`} className="exam-submission-item">
+                      {(() => {
+                        const statusMeta = getExamSubmissionStatusMeta(submission.status)
+                        return (
+                          <>
+                      <div className="exam-list-card-top">
+                        <strong>{submission.student_name}</strong>
+                        <span className={`status-pill status-pill--${statusMeta.tone}`}>{statusMeta.label}</span>
+                      </div>
+                      <p>{submission.student_id} · {submission.answered_count}/{submission.total_count} 문항</p>
+                      <p>점수 {submission.score ?? '-'} / {submission.max_score}</p>
+                          </>
+                        )
+                      })()}
+                    </article>
+                  ))}
+                </div>
+              </article>
+            </div>
+          </SectionCard>
+        ) : null}
+      </div>
+    )
+  }
+
+  function renderStudentExamModePage() {
+    const detail = studentExamDetail
+    const questions = detail?.questions ?? []
+    const currentQuestion = questions[studentExamQuestionIndex] ?? null
+    const answeredCount = questions.filter((question) => question.selected_option_id != null).length
+    const targetEnd = detail?.attempt?.expires_at ?? detail?.ends_at ?? null
+    const remainingSeconds = targetEnd ? Math.max(0, Math.floor((new Date(targetEnd).getTime() - examNow) / 1000)) : 0
+    const remainingMinutes = Math.floor(remainingSeconds / 60)
+    const remainingRemainSeconds = remainingSeconds % 60
+
+    return (
+      <main className="exam-mode-page-shell">
+        <div className="exam-mode-masthead">
+          <div>
+            <span className="caption-text">{selectedCourse?.course_code ?? ''}</span>
+            <h1>{detail?.title ?? '시험 응시'}</h1>
+          </div>
+          <div className="exam-mode-masthead-status">
+            <span className="status-pill status-pill--ok">시험 응시 중</span>
+            <span className="info-chip">남은 시간 {remainingMinutes}:{String(remainingRemainSeconds).padStart(2, '0')}</span>
+          </div>
+        </div>
+
+        {!detail || !currentQuestion ? (
+          <section className="exam-mode-panel exam-mode-panel--hero">
+            <p className="empty-state">시험 정보를 불러오는 중입니다.</p>
+          </section>
+        ) : (
+          <div className="exam-mode-layout">
+            <div className="exam-side-section">
+              <section className="exam-mode-panel exam-mode-panel--question">
+                <div className="exam-question-shell-head">
+                  <div className="exam-progress-copy">
+                    <h2>{currentQuestion.question_order}번 문항</h2>
+                  </div>
+                  <span className="info-chip">{currentQuestion.points}점</span>
+                </div>
+                <p className="exam-question-prompt">{currentQuestion.prompt}</p>
+                <div className="exam-option-list">
+                  {currentQuestion.options.map((option) => (
+                    <label
+                      key={option.id}
+                      className={`exam-option-card exam-option-card--immersive${currentQuestion.selected_option_id === option.id ? ' is-selected' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        checked={currentQuestion.selected_option_id === option.id}
+                        onChange={() => void handleStudentExamOptionSelect(currentQuestion, option.id)}
+                      />
+                      <span className="exam-option-order">{option.option_order}</span>
+                      <span className="exam-option-copy">
+                        <span>{option.option_text}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div className="exam-inline-actions exam-inline-actions--primary">
+                  <button
+                    type="button"
+                    className="text-button exam-nav-action exam-nav-action--ghost"
+                    onClick={() => setStudentExamQuestionIndex((current) => Math.max(0, current - 1))}
+                    disabled={studentExamQuestionIndex === 0}
+                  >
+                    이전 문항
+                  </button>
+                  {studentExamQuestionIndex < questions.length - 1 ? (
+                    <button
+                      type="button"
+                      className="exam-nav-action exam-nav-action--primary"
+                      onClick={() => setStudentExamQuestionIndex((current) => Math.min(questions.length - 1, current + 1))}
+                    >
+                      다음 문항
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="exam-nav-action exam-nav-action--submit"
+                      onClick={() => void handleStudentExamSubmit()}
+                      disabled={examBusyKey === `submit-${detail.id}`}
+                    >
+                      답안 제출
+                    </button>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <aside className="exam-mode-sidebar">
+              <section className="exam-mode-panel exam-mode-panel--sidebar">
+                <div className="exam-side-section">
+                  <div className="exam-side-section-head">
+                    <strong>시험 문제</strong>
+                    <span className="caption-text exam-mode-count">{answeredCount}/{questions.length}</span>
+                  </div>
+                  <div className="exam-nav-grid exam-nav-grid--immersive exam-nav-grid--stacked">
+                    {questions.map((question, index) => (
+                      <button
+                        key={question.id}
+                        type="button"
+                        className={`exam-nav-button${question.selected_option_id != null ? ' is-answered' : ''}${index === studentExamQuestionIndex ? ' is-active' : ''}`}
+                        onClick={() => setStudentExamQuestionIndex(index)}
+                      >
+                        <span>{question.question_order}번</span>
+                        <small>{question.selected_option_id != null ? '완료' : '대기'}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        )}
+        {studentExamSubmitWarning.length > 0 ? (
+          <div className="exam-submit-warning-backdrop" role="presentation" onClick={() => setStudentExamSubmitWarning([])}>
+            <div className="exam-submit-warning-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              <div className="exam-submit-warning-head">
+                <strong>아직 답하지 않은 문제가 있어요.</strong>
+                <button type="button" className="text-button" onClick={() => setStudentExamSubmitWarning([])}>닫기</button>
+              </div>
+              <p>
+                미응답 문항: {studentExamSubmitWarning.map((questionOrder) => `${questionOrder}번`).join(', ')}
+              </p>
+              <span className="caption-text">첫 번째 미응답 문항으로 이동했습니다. 모든 문제를 답해야 제출할 수 있습니다.</span>
+              <div className="exam-submit-warning-actions">
+                <button type="button" onClick={() => setStudentExamSubmitWarning([])}>확인</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </main>
+    )
+  }
+
+  function renderCourseExams() {
+    if (isStudent) {
+      return renderStudentExamSection()
+    }
+    if (isProfessor) {
+      return renderProfessorExamSection()
+    }
+    return (
+      <SectionCard title="시험">
+        <p className="empty-state">관리자 계정에서는 시험 화면을 직접 사용할 수 없습니다.</p>
+      </SectionCard>
+    )
+  }
+
   function renderCoursePage() {
     if (!selectedCourse) {
       return (
@@ -2991,6 +4268,7 @@ function App() {
           {courseSection === 'overview' ? renderCourseOverview() : null}
           {courseSection === 'content' ? renderCourseContent() : null}
           {courseSection === 'notices' ? renderCourseNotices() : null}
+          {courseSection === 'exams' ? renderCourseExams() : null}
           {courseSection === 'attendance' ? renderCourseAttendance() : null}
           {courseSection === 'manage' ? renderCourseManage() : null}
         </div>
@@ -3016,6 +4294,10 @@ function App() {
 
   if (!currentUser) {
     return renderLoginPage()
+  }
+
+  if (inStudentExamMode) {
+    return renderStudentExamModePage()
   }
 
   return (

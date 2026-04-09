@@ -1,4 +1,4 @@
-export type CourseSection = 'overview' | 'content' | 'notices' | 'attendance' | 'manage'
+export type CourseSection = 'overview' | 'content' | 'notices' | 'exams' | 'attendance' | 'manage'
 export type AttendancePage = 'timeline' | 'timer' | 'roster'
 
 export type AppRoute =
@@ -13,6 +13,8 @@ export type AppRoute =
       attendancePage?: AttendancePage
       sessionId?: number
       projectionKey?: string
+      examId?: number
+      examMode?: 'take'
     }
 
 function cleanPathname(pathname: string) {
@@ -66,7 +68,18 @@ export function parseAppRoute(pathname: string): AppRoute {
     }
   }
 
-  const courseSectionMatch = normalizedPath.match(/^\/courses\/([^/]+)\/(content|notices|attendance|manage)$/)
+  const courseExamTakeMatch = normalizedPath.match(/^\/courses\/([^/]+)\/exams\/(\d+)\/take$/)
+  if (courseExamTakeMatch) {
+    return {
+      kind: 'course',
+      courseCode: decodeURIComponent(courseExamTakeMatch[1]),
+      section: 'exams',
+      examId: Number(courseExamTakeMatch[2]),
+      examMode: 'take',
+    }
+  }
+
+  const courseSectionMatch = normalizedPath.match(/^\/courses\/([^/]+)\/(content|notices|exams|attendance|manage)$/)
   if (courseSectionMatch) {
     return {
       kind: 'course',
@@ -101,6 +114,9 @@ export function buildAppPath(route: AppRoute) {
     case 'course': {
       const basePath = `/courses/${encodeURIComponent(route.courseCode)}`
       if (route.section === 'overview') return basePath
+      if (route.section === 'exams' && route.examMode === 'take' && route.examId != null) {
+        return `${basePath}/exams/${route.examId}/take`
+      }
       if (route.section !== 'attendance') return `${basePath}/${route.section}`
       if (route.attendancePage && route.attendancePage !== 'timeline' && route.sessionId) {
         return `${basePath}/attendance/sessions/${route.sessionId}/${route.attendancePage}`
