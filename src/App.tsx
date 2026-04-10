@@ -1300,11 +1300,11 @@ function App() {
     return () => socket.close()
   }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
 
-  async function loadStudentExamList(courseCode = selectedCourse?.course_code) {
+  const loadStudentExamList = useCallback(async (courseCode = selectedCourse?.course_code) => {
     if (!currentUser || currentUser.role !== 'student' || !courseCode) return
     const nextExams = await api.listStudentExams(currentUser.login_id, courseCode)
     setStudentExams(nextExams)
-  }
+  }, [currentUser, selectedCourse?.course_code])
 
   async function loadProfessorExamList(courseCode = selectedCourse?.course_code) {
     if (!currentUser || currentUser.role !== 'professor' || !courseCode) return
@@ -1312,7 +1312,7 @@ function App() {
     setProfessorExams(nextExams)
   }
 
-  async function openStudentExamDetail(examId: number, options?: { navigateToDetail?: boolean }) {
+  const openStudentExamDetail = useCallback(async (examId: number, options?: { navigateToDetail?: boolean }) => {
     if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
     setExamLoading(true)
     try {
@@ -1335,7 +1335,7 @@ function App() {
     } finally {
       setExamLoading(false)
     }
-  }
+  }, [currentUser, navigate, selectedCourse])
 
   async function openProfessorExamDetail(examId: number, options?: { loadIntoDraft?: boolean }) {
     if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
@@ -1544,7 +1544,7 @@ function App() {
     }
   }
 
-  async function handleStudentExamSubmit(options?: { skipUnansweredCheck?: boolean; auto?: boolean }) {
+  const handleStudentExamSubmit = useCallback(async (options?: { skipUnansweredCheck?: boolean; auto?: boolean }) => {
     if (!currentUser || currentUser.role !== 'student' || !selectedCourse || !studentExamDetail) return
     if (!options?.skipUnansweredCheck) {
       const unansweredQuestions = studentExamDetail.questions
@@ -1591,7 +1591,7 @@ function App() {
         setStudentExamAutoSubmittingId(null)
       }
     }
-  }
+  }, [currentUser, loadStudentExamList, navigate, openStudentExamDetail, selectedCourse, studentExamDetail])
 
   useEffect(() => {
     if (courseSection !== 'exams' || !selectedCourse || !currentUser) return
@@ -1666,7 +1666,7 @@ function App() {
     if (new Date(targetEnd).getTime() > examNow) return
 
     void handleStudentExamSubmit({ skipUnansweredCheck: true, auto: true })
-  }, [courseSection, currentUser, examBusyKey, examNow, inStudentExamMode, selectedCourse, studentExamAutoSubmittingId, studentExamDetail])
+  }, [courseSection, currentUser, examBusyKey, examNow, handleStudentExamSubmit, inStudentExamMode, selectedCourse, studentExamAutoSubmittingId, studentExamDetail])
 
   function handleAddLearningItem(event: FormEvent) {
     event.preventDefault()
