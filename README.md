@@ -52,7 +52,7 @@ npm run test:e2e
 
 ## Docker
 
-Docker 이미지는 Vite 빌드 산출물을 nginx 로 정적으로 제공한다. 통합 개발 / 시연 경로에서는 CodexKit edge nginx 가 외부 진입점과 Host 정책, `/api` / `/ws` / `/health` 프록시를 소유한다.
+Docker 이미지는 Vite 빌드 산출물을 nginx 로 정적으로 제공한다. 통합 개발 / 시연 경로에서는 CodexKit edge nginx 가 외부 진입점과 Host 정책, `/api` / `/ws` / `/health` 프록시를 소유한다. 정적 nginx 컨테이너의 runtime environment 는 이미 빌드된 브라우저 번들을 다시 설정하지 않으므로, CodexKit Docker 경로에서는 `VITE_BACKEND_URL` 을 주입하지 않고 same-origin 프록시를 사용한다.
 
 ```bash
 docker build -t smart-class-front .
