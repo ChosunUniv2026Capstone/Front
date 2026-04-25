@@ -52,11 +52,11 @@ npm run test:e2e
 
 ## Docker
 
-Docker 이미지는 Vite 빌드 산출물을 nginx 로 정적으로 제공한다. 통합 개발 / 시연 경로에서는 CodexKit edge nginx 가 외부 진입점과 Host 정책, `/api` / `/ws` / `/health` 프록시를 소유한다. 정적 nginx 컨테이너의 runtime environment 는 이미 빌드된 브라우저 번들을 다시 설정하지 않으므로, CodexKit Docker 경로에서는 `VITE_BACKEND_URL` 을 주입하지 않고 same-origin 프록시를 사용한다.
+Docker 이미지는 Vite 빌드 산출물을 nginx 로 정적으로 제공한다. 통합 개발 / 시연 경로에서는 Service repo의 edge nginx가 외부 진입점과 Host 정책, `/api` / `/ws` / `/health` 프록시를 소유한다. 정적 nginx 컨테이너의 runtime environment 는 이미 빌드된 브라우저 번들을 다시 설정하지 않으므로, Service Docker 경로에서는 `VITE_BACKEND_URL` 을 주입하지 않고 same-origin 프록시를 사용한다.
 
 ```bash
 docker build -t smart-class-front .
 docker run --rm -p 3000:80 smart-class-front
 ```
 
-CodexKit/nginx 경로에서는 `VITE_BACKEND_URL` 값을 비워 same-origin REST/WebSocket 프록시를 사용한다. 직접 Vite dev server 에서 Backend 에 바로 연결해야 하면 `.env` 에 `VITE_BACKEND_URL=http://localhost:8000` 을 설정한다. 이번 구성에서는 Vite proxy 를 사용하지 않는다.
+Service/nginx 경로에서는 `VITE_BACKEND_URL` 값을 비워 same-origin REST/WebSocket 프록시를 사용한다. 직접 Vite dev server 에서 Backend 에 바로 연결해야 하면 `.env` 에 `VITE_BACKEND_URL=http://localhost:8000` 을 설정한다. 이번 구성에서는 Vite proxy 를 사용하지 않는다.
