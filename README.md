@@ -21,7 +21,9 @@
 
 - `VITE_BACKEND_URL`
   - 기본값: 빈 값 (`""`)
-  - nginx path proxy 사용 시 same-origin `/api`, `/health` 경로를 사용한다.
+  - nginx path proxy 사용 시 REST 는 same-origin `/api`, `/health` 경로를 사용한다.
+  - 출석 WebSocket 도 값이 비어 있으면 현재 페이지의 protocol/host 에서 `ws://` 또는 `wss://` 를 파생해 같은 origin 의 `/ws/attendance` 로 연결한다.
+  - Vite dev server 에서 Backend 를 직접 호출해야 하는 경우에만 `.env` 에 `VITE_BACKEND_URL=http://localhost:8000` 을 설정한다.
 
 ## 로컬 실행
 
@@ -47,9 +49,11 @@ npm run test:e2e
 
 ## Docker
 
+프로덕션 Docker 이미지는 Vite 빌드 산출물을 nginx 로 정적으로 제공한다. 배포 도메인과 Host 정책은 Front 이미지가 아니라 CodexKit edge nginx 가 소유한다.
+
 ```bash
 docker build -t smart-class-front .
-docker run --rm -p 3000:3000 -e VITE_BACKEND_URL=http://localhost:8000 smart-class-front
+docker run --rm -p 3000:80 smart-class-front
 ```
 
-컨테이너는 Vite dev server 를 `3000` 포트로 노출한다.
+CodexKit/nginx 경로에서는 `VITE_BACKEND_URL` 값을 비워 same-origin REST/WebSocket 프록시를 사용한다. 직접 로컬 개발에서 Backend 에 바로 연결해야 하면 `.env` 에 `VITE_BACKEND_URL=http://localhost:8000` 을 설정한다.

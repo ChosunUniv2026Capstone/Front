@@ -493,7 +493,39 @@ type ApiErrorEnvelope = {
   }
 }
 
-const API_BASE = (import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+export function resolveBackendHttpBase(configuredUrl = import.meta.env.VITE_BACKEND_URL): string {
+  return (configuredUrl ?? '').trim().replace(/\/+$/, '')
+}
+
+type BrowserLocation = Pick<Location, 'protocol' | 'host'>
+
+export function resolveBackendWebSocketBase(
+  configuredUrl = import.meta.env.VITE_BACKEND_URL,
+  location: BrowserLocation = window.location,
+): string {
+  const explicitBase = resolveBackendHttpBase(configuredUrl)
+  if (explicitBase) {
+    return explicitBase.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+  }
+
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${location.host}`
+}
+
+export function buildAttendanceWebSocketUrl(
+  courseCode: string,
+  view: 'student' | 'professor',
+  configuredUrl = import.meta.env.VITE_BACKEND_URL,
+  location: BrowserLocation = window.location,
+): string {
+  const params = new URLSearchParams({
+    courseCode,
+    view,
+  })
+  return `${resolveBackendWebSocketBase(configuredUrl, location)}/ws/attendance?${params.toString()}`
+}
+
+const API_BASE = resolveBackendHttpBase()
 let authFailureHandler: (() => void) | null = null
 let refreshPromise: Promise<LoginResponse> | null = null
 

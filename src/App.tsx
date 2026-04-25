@@ -2,6 +2,7 @@
 import type { FormEvent, ReactNode } from 'react'
 import {
   ApiRequestError,
+  buildAttendanceWebSocketUrl,
   type AttendanceHistory,
   type ExamSummary,
   type ProfessorAttendanceStudentStats,
@@ -1268,9 +1269,12 @@ function App() {
 
   useEffect(() => {
     if (courseSection !== 'attendance' || !selectedCourse || !currentUser) return
-    const baseUrl = (import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '')
-    const socketUrl = `${baseUrl.replace(/^http/, 'ws')}/ws/attendance?courseCode=${encodeURIComponent(selectedCourse.course_code)}&view=${encodeURIComponent(currentUser.role === 'student' ? 'student' : 'professor')}`
-    const socket = new WebSocket(socketUrl)
+    const socket = new WebSocket(
+      buildAttendanceWebSocketUrl(
+        selectedCourse.course_code,
+        currentUser.role === 'student' ? 'student' : 'professor',
+      ),
+    )
     socket.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as { event_type?: string; changed_payload?: { data?: AttendanceTimeline | { sessions?: typeof studentAttendanceSessions } } }
@@ -3076,7 +3080,7 @@ function App() {
     const showProfessorRoster = isProfessor && routeAttendancePage === 'roster' && Boolean(selectedAttendanceSlot)
     const semesterMatrixColumnCount = Math.max(
       0,
-      ...(attendanceSemesterMatrix?.weeks.map((week) => week.slots.length) ?? [0]),
+      ...((attendanceSemesterMatrix?.weeks ?? []).map((week) => week.slots.length)),
     )
 
     return (

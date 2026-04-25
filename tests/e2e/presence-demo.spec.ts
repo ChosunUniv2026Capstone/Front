@@ -131,6 +131,16 @@ test('admin overlay controls and student eligibility change are visible', async 
   await page.route('**/api/students/20201239/devices', async (route) => {
     await route.fulfill({ json: [{ id: 1, label: 'Choi Phone', mac_address: '52:54:00:12:34:56', status: 'active' }] })
   })
+  await page.route('**/api/students/20201239/courses/CSE116/attendance/active-sessions', async (route) => {
+    await route.fulfill({
+      json: { course_code: 'CSE116', student_id: '20201239', sessions: [] },
+    })
+  })
+  await page.route('**/api/students/20201239/courses/CSE116/attendance/semester-matrix', async (route) => {
+    await route.fulfill({
+      json: { course_code: 'CSE116', course_title: 'Capstone Design A', student_id: '20201239', student_name: 'Kim Student 06', weeks: [] },
+    })
+  })
   await page.route('**/api/attendance/eligibility', async (route) => {
     await route.fulfill({
       json: overlayApplied
