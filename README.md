@@ -27,9 +27,12 @@
 
 ## 로컬 실행
 
+통합 개발의 공식 경로는 CodexKit Docker Compose 다. Front 만 직접 개발 서버로 띄울 때는 아래처럼 실행한다. 이 경우 Vite proxy 를 사용하지 않으므로 Backend 를 직접 호출해야 하면 `.env` 에 `VITE_BACKEND_URL=http://localhost:8000` 을 설정한다.
+
 ```bash
 npm install
 cp .env.example .env
+# Backend 직접 호출이 필요한 경우 .env 에 VITE_BACKEND_URL=http://localhost:8000 설정
 npm run dev -- --host 0.0.0.0 --port 3000
 ```
 
@@ -49,11 +52,11 @@ npm run test:e2e
 
 ## Docker
 
-프로덕션 Docker 이미지는 Vite 빌드 산출물을 nginx 로 정적으로 제공한다. 배포 도메인과 Host 정책은 Front 이미지가 아니라 CodexKit edge nginx 가 소유한다.
+Docker 이미지는 Vite 빌드 산출물을 nginx 로 정적으로 제공한다. 통합 개발 / 시연 경로에서는 CodexKit edge nginx 가 외부 진입점과 Host 정책, `/api` / `/ws` / `/health` 프록시를 소유한다.
 
 ```bash
 docker build -t smart-class-front .
 docker run --rm -p 3000:80 smart-class-front
 ```
 
-CodexKit/nginx 경로에서는 `VITE_BACKEND_URL` 값을 비워 same-origin REST/WebSocket 프록시를 사용한다. 직접 로컬 개발에서 Backend 에 바로 연결해야 하면 `.env` 에 `VITE_BACKEND_URL=http://localhost:8000` 을 설정한다.
+CodexKit/nginx 경로에서는 `VITE_BACKEND_URL` 값을 비워 same-origin REST/WebSocket 프록시를 사용한다. 직접 Vite dev server 에서 Backend 에 바로 연결해야 하면 `.env` 에 `VITE_BACKEND_URL=http://localhost:8000` 을 설정한다. 이번 구성에서는 Vite proxy 를 사용하지 않는다.
