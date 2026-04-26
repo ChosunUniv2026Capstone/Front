@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.2.0...smart-class-front-v0.2.1) (2026-04-26)
+
+
+### Bug Fixes
+
+* **frontend:** normalize release image tags from package version ([#15](https://github.com/ChosunUniv2026Capstone/Front/issues/15)) ([3a84f70](https://github.com/ChosunUniv2026Capstone/Front/commit/3a84f70f5eacc623f7d10512ec58465df5dd9f08))
+
 ## [0.2.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.1.0...smart-class-front-v0.2.0) (2026-04-26)
 
 
