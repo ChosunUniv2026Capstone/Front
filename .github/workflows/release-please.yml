@@ -50,19 +50,21 @@ jobs:
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: |
           set -euo pipefail
-          version="${TAG_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
           IFS=. read -r major minor patch <<< "$version"
           revision="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=7 HEAD)"
+          version_tag="v$major.$minor.$patch"
           {
             echo 'tags<<TAGS'
-            echo "$IMAGE_NAME:v$major.$minor.$patch"
+            echo "$IMAGE_NAME:$version_tag"
             echo "$IMAGE_NAME:v$major.$minor"
             if [ "$major" -gt 0 ]; then
               echo "$IMAGE_NAME:v$major"
             fi
             echo "$IMAGE_NAME:sha-$short_sha"
             echo 'TAGS'
+            echo "version_tag=$version_tag"
             echo "revision=$revision"
           } >> "$GITHUB_OUTPUT"
 
@@ -104,7 +106,7 @@ jobs:
             echo '- Tags:'
             while IFS= read -r tag; do echo "  - \`$tag\`"; done <<< '${{ steps.tags.outputs.tags }}'
             echo '- Digest: `${{ steps.build.outputs.digest }}`'
-            echo '- Service manifest ref: `${{ steps.image.outputs.name }}:${{ steps.release.outputs.tag_name }}@${{ steps.build.outputs.digest }}`'
+            echo '- Service manifest ref: `${{ steps.image.outputs.name }}:${{ steps.tags.outputs.version_tag }}@${{ steps.build.outputs.digest }}`'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Try to make GHCR package public
