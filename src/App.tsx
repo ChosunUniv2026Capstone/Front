@@ -31,6 +31,7 @@ import {
   type Course,
   type Device,
   type EligibilityResponse,
+  type LearningItem,
   type LoginUser,
   type Notice,
   type UserSummary,
@@ -45,19 +46,6 @@ import {
 
 type AppView = 'dashboard' | 'profile' | 'course' | 'notice'
 type AdminTab = 'users' | 'networks' | 'demo'
-
-type LearningItem = {
-  id: string
-  course_code: string
-  kind: 'material' | 'video'
-  title: string
-  description: string
-  week_label: string
-  format_label: string
-  uploaded_at: string
-  author_name: string
-  duration_label?: string
-}
 
 type Metric = {
   label: string
@@ -267,37 +255,6 @@ function formatFileSize(bytes?: number | null) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function createLearningSeed(courses: Course[], authorName?: string) {
-  return courses.flatMap((course, index) => {
-    const weekLabel = `${(index % 4) + 1}주차`
-    return [
-      {
-        id: `${course.course_code}-material`,
-        course_code: course.course_code,
-        kind: 'material' as const,
-        title: `${weekLabel} 강의자료`,
-        description: `${course.title} 수업 핵심 개념과 실습 예시를 정리한 자료입니다.`,
-        week_label: weekLabel,
-        format_label: 'PDF',
-        uploaded_at: `2026-03-${String((index % 9) + 11).padStart(2, '0')}`,
-        author_name: course.professor_name ?? authorName ?? '담당 교수',
-      },
-      {
-        id: `${course.course_code}-video`,
-        course_code: course.course_code,
-        kind: 'video' as const,
-        title: `${weekLabel} 강의영상`,
-        description: `${course.title} 핵심 내용을 다시 확인할 수 있는 영상입니다.`,
-        week_label: weekLabel,
-        format_label: 'LINK',
-        duration_label: `${20 + (index % 3) * 10}분`,
-        uploaded_at: `2026-03-${String((index % 9) + 12).padStart(2, '0')}`,
-        author_name: course.professor_name ?? authorName ?? '담당 교수',
-      },
-    ]
-  })
 }
 
 function formatBoardDate(value?: string | null) {
@@ -573,6 +530,8 @@ function App() {
   const [learningWeek, setLearningWeek] = useState('1주차')
   const [learningFormat, setLearningFormat] = useState('PDF')
   const [learningDuration, setLearningDuration] = useState('20분')
+  const [learningFiles, setLearningFiles] = useState<File[]>([])
+  const [noticeFiles, setNoticeFiles] = useState<File[]>([])
 
   const [devices, setDevices] = useState<Device[]>([])
   const [eligibility, setEligibility] = useState<EligibilityResponse | null>(null)
@@ -731,18 +690,18 @@ function App() {
     ])
     setCourses(nextCourses)
     setNotices(nextNotices)
-    setLearningItems(createLearningSeed(nextCourses))
+    setLearningItems([])
     setSelectedLearningItem(null)
   }, [refreshDevices])
 
-  const hydrateProfessor = useCallback(async (professorLoginId: string, professorName?: string) => {
+  const hydrateProfessor = useCallback(async (professorLoginId: string) => {
     const [nextCourses, nextNotices] = await Promise.all([
       api.listProfessorCourses(professorLoginId),
       api.listNotices(professorLoginId),
     ])
     setCourses(nextCourses)
     setNotices(nextNotices)
-    setLearningItems(createLearningSeed(nextCourses, professorName))
+    setLearningItems([])
     setSelectedLearningItem(null)
   }, [])
 
@@ -804,7 +763,7 @@ function App() {
         if (restored.user.role === 'student') {
           await hydrateStudent(restored.user.login_id)
         } else if (restored.user.role === 'professor') {
-          await hydrateProfessor(restored.user.login_id, restored.user.name)
+          await hydrateProfessor(restored.user.login_id)
         } else {
           await hydrateAdmin()
         }
@@ -943,7 +902,7 @@ function App() {
       if (result.user.role === 'student') {
         await hydrateStudent(result.user.login_id)
       } else if (result.user.role === 'professor') {
-        await hydrateProfessor(result.user.login_id, result.user.name)
+        await hydrateProfessor(result.user.login_id)
       } else {
         await hydrateAdmin()
       }
@@ -1018,13 +977,15 @@ function App() {
 
     try {
       setError(null)
-      await api.createNotice(currentUser.login_id, {
+      await api.createNoticeWithAttachments(currentUser.login_id, {
         title: noticeTitle,
         body: noticeBody,
         course_code: selectedCourse?.course_code,
+        files: noticeFiles,
       })
       setNoticeTitle('')
       setNoticeBody('')
+      setNoticeFiles([])
       setNotices(await api.listNotices(currentUser.login_id))
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '공지 등록에 실패했습니다.')
@@ -1907,11 +1868,63 @@ function App() {
     }
   }, [courseSection, currentUser, routeExamId, selectedCourse])
 
+
+  useEffect(() => {
+    if (courseSection !== 'content' || !selectedCourse || !currentUser) return
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const nextItems = currentUser.role === 'professor'
+          ? await api.listProfessorLearningItems(currentUser.login_id, selectedCourse.course_code)
+          : await api.listStudentLearningItems(currentUser.login_id, selectedCourse.course_code)
+        if (cancelled) return
+        setLearningItems(nextItems)
+        setSelectedLearningItem((current) => {
+          if (!current) return nextItems[0] ?? null
+          return nextItems.find((item) => item.id === current.id) ?? nextItems[0] ?? null
+        })
+      } catch (caughtError) {
+        if (!cancelled) setError(caughtError instanceof Error ? caughtError.message : '학습 자료를 불러오지 못했습니다.')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [courseSection, currentUser, selectedCourse])
+
   useEffect(() => {
     if (!inStudentExamMode) return
     const timer = window.setInterval(() => setExamNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [inStudentExamMode])
+
+
+  useEffect(() => {
+    if (courseSection !== 'content' || !selectedCourse || !currentUser) return
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const nextItems = currentUser.role === 'professor'
+          ? await api.listProfessorLearningItems(currentUser.login_id, selectedCourse.course_code)
+          : await api.listStudentLearningItems(currentUser.login_id, selectedCourse.course_code)
+        if (cancelled) return
+        setLearningItems(nextItems)
+        setSelectedLearningItem((current) => {
+          if (!current) return nextItems[0] ?? null
+          return nextItems.find((item) => item.id === current.id) ?? nextItems[0] ?? null
+        })
+      } catch (caughtError) {
+        if (!cancelled) setError(caughtError instanceof Error ? caughtError.message : '학습 자료를 불러오지 못했습니다.')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [courseSection, currentUser, selectedCourse])
 
   useEffect(() => {
     if (!inStudentExamMode) return
@@ -1935,41 +1948,49 @@ function App() {
     void handleStudentExamSubmit({ skipUnansweredCheck: true, auto: true })
   }, [courseSection, currentUser, examBusyKey, examNow, handleStudentExamSubmit, inStudentExamMode, selectedCourse, studentExamAutoSubmittingId, studentExamDetail])
 
-  function handleAddLearningItem(event: FormEvent) {
+  async function handleAddLearningItem(event: FormEvent) {
     event.preventDefault()
     if (!selectedCourse || !currentUser || currentUser.role !== 'professor') return
 
-    const nextItem: LearningItem = {
-      id: `${selectedCourse.course_code}-${learningKind}-${Date.now()}`,
-      course_code: selectedCourse.course_code,
-      kind: learningKind,
-      title: learningTitle.trim(),
-      description: learningDescription.trim(),
-      week_label: learningWeek.trim() || '주차 미지정',
-      format_label: learningFormat.trim() || (learningKind === 'video' ? 'LINK' : 'PDF'),
-      uploaded_at: new Date().toISOString().slice(0, 10),
-      author_name: currentUser.name,
-      duration_label: learningKind === 'video' ? learningDuration.trim() || '재생시간 미정' : undefined,
-    }
-
-    if (!nextItem.title || !nextItem.description) {
+    if (!learningTitle.trim() || !learningDescription.trim()) {
       setError('자료 또는 영상의 제목과 설명을 입력해주세요.')
       return
     }
 
-    setError(null)
-    setLearningItems((current) => [nextItem, ...current])
-    setSelectedLearningItem(nextItem)
-    setLearningTitle('')
-    setLearningDescription('')
-    setLearningWeek('1주차')
-    setLearningFormat(learningKind === 'video' ? 'LINK' : 'PDF')
-    setLearningDuration('20분')
+    try {
+      setError(null)
+      const nextItem = await api.createProfessorLearningItem(currentUser.login_id, selectedCourse.course_code, {
+        kind: learningKind,
+        title: learningTitle.trim(),
+        description: learningDescription.trim(),
+        week_label: learningWeek.trim() || '주차 미지정',
+        format_label: learningFormat.trim() || (learningKind === 'video' ? 'LINK' : 'PDF'),
+        duration_label: learningKind === 'video' ? learningDuration.trim() || '재생시간 미정' : undefined,
+        files: learningFiles,
+      })
+      setLearningItems((current) => [nextItem, ...current.filter((item) => item.id !== nextItem.id)])
+      setSelectedLearningItem(nextItem)
+      setLearningTitle('')
+      setLearningDescription('')
+      setLearningWeek('1주차')
+      setLearningFormat(learningKind === 'video' ? 'LINK' : 'PDF')
+      setLearningDuration('20분')
+      setLearningFiles([])
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '자료 또는 영상을 등록하지 못했습니다.')
+    }
   }
 
-  function handleDeleteLearningItem(itemId: string) {
-    setLearningItems((current) => current.filter((item) => item.id !== itemId))
-    setSelectedLearningItem((current) => (current?.id === itemId ? null : current))
+  async function handleDeleteLearningItem(itemId: number) {
+    if (!selectedCourse || !currentUser || currentUser.role !== 'professor') return
+    try {
+      setError(null)
+      await api.deleteProfessorLearningItem(currentUser.login_id, selectedCourse.course_code, itemId)
+      setLearningItems((current) => current.filter((item) => item.id !== itemId))
+      setSelectedLearningItem((current) => (current?.id === itemId ? null : current))
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '자료 또는 영상을 삭제하지 못했습니다.')
+    }
   }
 
   async function openNotice(notice: Notice, fromView: AppView) {
@@ -3035,7 +3056,7 @@ function App() {
                   <span className="info-chip">{LEARNING_KIND_LABEL[item.kind]}</span>
                   <div>
                     <strong>{item.title}</strong>
-                    <p>{item.week_label} · {formatBoardDate(item.uploaded_at)}</p>
+                    <p>{item.week_label} · {formatBoardDate(item.created_at)}</p>
                   </div>
                 </article>
               ))}
@@ -3092,7 +3113,21 @@ function App() {
                   <input value={learningDuration} onChange={(event) => setLearningDuration(event.target.value)} placeholder="예: 20분" />
                 </label>
               ) : null}
-              <button type="submit">{learningKind === 'video' ? '임시 영상 등록' : '임시 자료 등록'}</button>
+              <label>
+                파일 첨부
+                <input type="file" multiple onChange={(event) => setLearningFiles(Array.from(event.target.files ?? []))} />
+              </label>
+              {learningFiles.length > 0 ? (
+                <div className="assignment-pending-files">
+                  {learningFiles.map((file) => (
+                    <span key={`${file.name}-${file.size}-${file.lastModified}`} className="assignment-attachment-chip">
+                      <span>{file.name}</span>
+                      <small>{formatFileSize(file.size)}</small>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <button type="submit">{learningKind === 'video' ? '영상 등록' : '자료 등록'}</button>
             </form>
           </SectionCard>
         ) : null}
@@ -3140,7 +3175,7 @@ function App() {
                         <div className="content-meta">
                           <span className="badge">{LEARNING_KIND_LABEL[item.kind]}</span>
                           <span>{item.week_label}</span>
-                          <span>{formatBoardDate(item.uploaded_at)}</span>
+                          <span>{formatBoardDate(item.created_at)}</span>
                         </div>
                         <strong>{item.title}</strong>
                         <p>{item.description}</p>
@@ -3166,7 +3201,7 @@ function App() {
                     <div className="content-preview-meta">
                       <span className="badge">{LEARNING_KIND_LABEL[selectedLearningItem.kind]}</span>
                       <span>{selectedLearningItem.week_label}</span>
-                      <span>{formatBoardDate(selectedLearningItem.uploaded_at)}</span>
+                      <span>{formatBoardDate(selectedLearningItem.created_at)}</span>
                     </div>
                     <h3 className="content-preview-title">{selectedLearningItem.title}</h3>
                     <p className="content-preview-text">{selectedLearningItem.description}</p>
@@ -3190,9 +3225,28 @@ function App() {
                         <span>임시 미리보기 / 세션 한정</span>
                       </div>
                     </div>
-                    <button type="button">
-                      {selectedLearningItem.kind === 'video' ? '임시 영상 정보 보기' : '임시 자료 열람하기'}
-                    </button>
+                    {selectedLearningItem.attachments.length > 0 ? (
+                      <div className="assignment-attachment-list">
+                        {selectedLearningItem.attachments.map((attachment) => (
+                          <a
+                            key={attachment.id}
+                            href={isProfessor && currentUser
+                              ? api.buildProfessorLearningAttachmentUrl(currentUser.login_id, selectedLearningItem.course_code, selectedLearningItem.id, attachment.id)
+                              : currentUser
+                                ? api.buildStudentLearningAttachmentUrl(currentUser.login_id, selectedLearningItem.course_code, selectedLearningItem.id, attachment.id)
+                                : '#'}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="assignment-attachment-chip"
+                          >
+                            <span>{attachment.original_filename}</span>
+                            <small>{formatFileSize(attachment.file_size_bytes)}</small>
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="caption-text">첨부 파일이 없습니다.</p>
+                    )}
                   </SectionCard>
                 ) : (
                   <p className="empty-state">왼쪽 목록에서 자료 또는 영상을 선택해 내용을 확인하세요.</p>
@@ -3231,6 +3285,20 @@ function App() {
                 내용
                 <textarea value={noticeBody} onChange={(event) => setNoticeBody(event.target.value)} rows={5} />
               </label>
+              <label>
+                첨부 파일
+                <input type="file" multiple onChange={(event) => setNoticeFiles(Array.from(event.target.files ?? []))} />
+              </label>
+              {noticeFiles.length > 0 ? (
+                <div className="assignment-pending-files">
+                  {noticeFiles.map((file) => (
+                    <span key={`${file.name}-${file.size}-${file.lastModified}`} className="assignment-attachment-chip">
+                      <span>{file.name}</span>
+                      <small>{formatFileSize(file.size)}</small>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <button type="submit">공지 등록</button>
             </form>
           </SectionCard>
