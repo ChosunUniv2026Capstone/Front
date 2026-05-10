@@ -722,6 +722,10 @@ function buildApiUrl(path: string) {
   return `${API_BASE}${path}`
 }
 
+function pathSegment(value: string | number) {
+  return encodeURIComponent(String(value))
+}
+
 export const api = {
   health: () => request<{ status?: string }>('/health'),
   login: (payload: { login_id: string; password: string }) =>
@@ -747,9 +751,9 @@ export const api = {
   listStudentCourses: (studentId: string) => request<Course[]>(`/api/students/${studentId}/courses`),
   listProfessorCourses: (professorId: string) => request<Course[]>(`/api/professors/${professorId}/courses`),
   listStudentAssignments: (studentId: string, courseCode: string) =>
-    request<StudentAssignmentSummary[]>(`/api/students/${studentId}/courses/${courseCode}/assignments`),
+    request<StudentAssignmentSummary[]>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments`),
   getStudentAssignmentDetail: (studentId: string, courseCode: string, assignmentId: number) =>
-    request<StudentAssignmentDetail>(`/api/students/${studentId}/courses/${courseCode}/assignments/${assignmentId}`),
+    request<StudentAssignmentDetail>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}`),
   submitStudentAssignment: (
     studentId: string,
     courseCode: string,
@@ -767,7 +771,7 @@ export const api = {
       formData.append('files', file)
     }
     return request<StudentAssignmentDetail>(
-      `/api/students/${studentId}/courses/${courseCode}/assignments/${assignmentId}/submission`,
+      `/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/submission`,
       {
         method: 'POST',
         body: formData,
@@ -780,13 +784,13 @@ export const api = {
     assignmentId: number,
     attachmentId: number,
   ) =>
-    buildApiUrl(`/api/students/${studentId}/courses/${courseCode}/assignments/${assignmentId}/attachments/${attachmentId}`),
+    buildApiUrl(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/attachments/${pathSegment(attachmentId)}`),
   listProfessorAssignments: (professorId: string, courseCode: string) =>
-    request<ProfessorAssignmentSummary[]>(`/api/professors/${professorId}/courses/${courseCode}/assignments`),
+    request<ProfessorAssignmentSummary[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments`),
   getProfessorAssignmentDetail: (professorId: string, courseCode: string, assignmentId: number) =>
-    request<ProfessorAssignmentDetail>(`/api/professors/${professorId}/courses/${courseCode}/assignments/${assignmentId}`),
+    request<ProfessorAssignmentDetail>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}`),
   createProfessorAssignment: (professorId: string, courseCode: string, payload: ProfessorAssignmentCreatePayload) =>
-    request<ProfessorAssignmentDetail>(`/api/professors/${professorId}/courses/${courseCode}/assignments`, {
+    request<ProfessorAssignmentDetail>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
@@ -796,7 +800,7 @@ export const api = {
     assignmentId: number,
     attachmentId: number,
   ) =>
-    buildApiUrl(`/api/professors/${professorId}/courses/${courseCode}/assignments/${assignmentId}/attachments/${attachmentId}`),
+    buildApiUrl(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/attachments/${pathSegment(attachmentId)}`),
   listStudentExams: (studentId: string, courseCode: string) =>
     request<StudentExamSummary[]>(`/api/students/${studentId}/courses/${courseCode}/exams`),
   getStudentExamDetail: (studentId: string, courseCode: string, examId: number) =>

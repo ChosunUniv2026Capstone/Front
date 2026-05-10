@@ -4586,7 +4586,7 @@ function App() {
                         value={studentAssignmentText}
                         onChange={(event) => setStudentAssignmentText(event.target.value)}
                         placeholder="교수님께 전달할 설명이나 작업 내용을 입력하세요."
-                        disabled={studentAssignmentDetail.status === 'closed' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
+                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
                       />
                     </label>
                     <label>
@@ -4595,7 +4595,7 @@ function App() {
                         type="file"
                         multiple
                         onChange={(event) => setStudentAssignmentFiles(Array.from(event.target.files ?? []))}
-                        disabled={studentAssignmentDetail.status === 'closed' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
+                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
                       />
                     </label>
                     {studentAssignmentFiles.length > 0 ? (
@@ -4612,12 +4612,12 @@ function App() {
                       <button
                         type="submit"
                         className="primary-button"
-                        disabled={studentAssignmentDetail.status === 'closed' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
+                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
                       >
                         {assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}` ? '제출 중...' : '과제 제출'}
                       </button>
-                      {studentAssignmentDetail.status === 'closed' ? (
-                        <span className="caption-text">마감된 과제는 수정할 수 없습니다.</span>
+                      {studentAssignmentDetail.status !== 'open' ? (
+                        <span className="caption-text">진행 중인 과제만 제출하거나 수정할 수 있습니다.</span>
                       ) : (
                         <span className="caption-text">새 파일을 고르면 기존 첨부 파일이 교체됩니다.</span>
                       )}
