@@ -33,16 +33,65 @@ export type Notice = {
   course_code?: string | null
   author_name: string
   created_at?: string | null
+  attachments?: StoredObjectAttachment[]
 }
 
 export type AssignmentStatus = 'upcoming' | 'open' | 'closed'
 
-export type AssignmentAttachment = {
+export type StoredObjectAttachment = {
   id: number
   original_filename: string
   mime_type?: string | null
   file_size_bytes: number
   uploaded_at?: string | null
+  storage_provider?: string | null
+  bucket_name?: string | null
+}
+
+export type AssignmentAttachment = StoredObjectAttachment
+
+export type LearningItemKind = 'material' | 'video'
+
+export type LearningItemAttachment = StoredObjectAttachment & {
+  purpose?: LearningItemKind | string | null
+}
+
+export type LearningItem = {
+  id: number
+  course_code: string
+  kind: LearningItemKind
+  title: string
+  description?: string | null
+  week_label?: string | null
+  format_label?: string | null
+  author_name: string
+  created_at?: string | null
+  updated_at?: string | null
+  attachments: LearningItemAttachment[]
+  duration_label?: string | null
+}
+
+export type LearningItemCreatePayload = {
+  kind: LearningItemKind
+  title: string
+  description?: string | null
+  week_label?: string | null
+  format_label?: string | null
+  duration_label?: string | null
+  files?: File[]
+}
+
+export type ExamMediaAttachment = StoredObjectAttachment & {
+  question_id?: number | null
+  answer_id?: number | null
+  purpose?: 'question' | 'answer' | 'explanation' | string | null
+}
+
+export type ReportExport = StoredObjectAttachment & {
+  export_type: 'attendance_csv' | string
+  course_code: string
+  status?: 'pending' | 'ready' | 'failed' | string
+  generated_at?: string | null
 }
 
 export type StudentAssignmentSubmission = {
@@ -164,6 +213,7 @@ export type StudentExamQuestion = {
   is_required: boolean
   selected_option_id?: number | null
   options: ExamQuestionOption[]
+  attachments?: ExamMediaAttachment[]
 }
 
 export type StudentExamDetail = StudentExamSummary & {
@@ -726,6 +776,31 @@ function pathSegment(value: string | number) {
   return encodeURIComponent(String(value))
 }
 
+function learningItemFormData(payload: LearningItemCreatePayload) {
+  const formData = new FormData()
+  formData.append('kind', payload.kind)
+  formData.append('title', payload.title)
+  if (payload.description != null) formData.append('description', payload.description)
+  if (payload.week_label != null) formData.append('week_label', payload.week_label)
+  if (payload.format_label != null) formData.append('format_label', payload.format_label)
+  if (payload.duration_label != null) formData.append('duration_label', payload.duration_label)
+  for (const file of payload.files ?? []) {
+    formData.append('files', file)
+  }
+  return formData
+}
+
+function noticeFormData(payload: { title: string; body: string; course_code?: string | null; files?: File[] }) {
+  const formData = new FormData()
+  formData.append('title', payload.title)
+  formData.append('body', payload.body)
+  if (payload.course_code != null) formData.append('course_code', payload.course_code)
+  for (const file of payload.files ?? []) {
+    formData.append('files', file)
+  }
+  return formData
+}
+
 export const api = {
   health: () => request<{ status?: string }>('/health'),
   login: (payload: { login_id: string; password: string }) =>
@@ -801,6 +876,30 @@ export const api = {
     attachmentId: number,
   ) =>
     buildApiUrl(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/attachments/${pathSegment(attachmentId)}`),
+  listStudentLearningItems: (studentId: string, courseCode: string) =>
+    request<LearningItem[]>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/learning-items`),
+  listProfessorLearningItems: (professorId: string, courseCode: string) =>
+    request<LearningItem[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/learning-items`),
+  createProfessorLearningItem: (professorId: string, courseCode: string, payload: LearningItemCreatePayload) =>
+    request<LearningItem>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/learning-items`, {
+      method: 'POST',
+      body: learningItemFormData(payload),
+    }),
+  deleteProfessorLearningItem: (professorId: string, courseCode: string, learningItemId: number) =>
+    request<void>(
+      `/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/learning-items/${pathSegment(learningItemId)}`,
+      {
+        method: 'DELETE',
+      },
+    ),
+  buildStudentLearningAttachmentUrl: (studentId: string, courseCode: string, learningItemId: number, attachmentId: number) =>
+    buildApiUrl(
+      `/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/learning-items/${pathSegment(learningItemId)}/attachments/${pathSegment(attachmentId)}`,
+    ),
+  buildProfessorLearningAttachmentUrl: (professorId: string, courseCode: string, learningItemId: number, attachmentId: number) =>
+    buildApiUrl(
+      `/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/learning-items/${pathSegment(learningItemId)}/attachments/${pathSegment(attachmentId)}`,
+    ),
   listStudentExams: (studentId: string, courseCode: string) =>
     request<StudentExamSummary[]>(`/api/students/${studentId}/courses/${courseCode}/exams`),
   getStudentExamDetail: (studentId: string, courseCode: string, examId: number) =>
@@ -855,6 +954,45 @@ export const api = {
     request<ProfessorExamDetail>(`/api/professors/${professorId}/courses/${courseCode}/exams/${examId}/close`, {
       method: 'POST',
     }),
+  uploadProfessorExamQuestionAttachment: (
+    professorId: string,
+    courseCode: string,
+    examId: number,
+    questionId: number,
+    files: File[],
+  ) => {
+    const formData = new FormData()
+    for (const file of files) {
+      formData.append('files', file)
+    }
+    return request<ExamMediaAttachment[]>(
+      `/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/exams/${pathSegment(examId)}/questions/${pathSegment(questionId)}/attachments`,
+      {
+        method: 'POST',
+        body: formData,
+      },
+    )
+  },
+  buildStudentExamQuestionAttachmentUrl: (
+    studentId: string,
+    courseCode: string,
+    examId: number,
+    questionId: number,
+    attachmentId: number,
+  ) =>
+    buildApiUrl(
+      `/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/exams/${pathSegment(examId)}/questions/${pathSegment(questionId)}/attachments/${pathSegment(attachmentId)}`,
+    ),
+  buildProfessorExamQuestionAttachmentUrl: (
+    professorId: string,
+    courseCode: string,
+    examId: number,
+    questionId: number,
+    attachmentId: number,
+  ) =>
+    buildApiUrl(
+      `/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/exams/${pathSegment(examId)}/questions/${pathSegment(questionId)}/attachments/${pathSegment(attachmentId)}`,
+    ),
   listDevices: (studentId: string) => request<Device[]>(`/api/students/${studentId}/devices`),
   createDevice: (studentId: string, payload: { label: string; mac_address: string }) =>
     request<Device>(`/api/students/${studentId}/devices`, {
@@ -877,6 +1015,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  createNoticeWithAttachments: (
+    professorId: string,
+    payload: { title: string; body: string; course_code?: string | null; files?: File[] },
+  ) =>
+    request<Notice>(`/api/professors/${pathSegment(professorId)}/notices`, {
+      method: 'POST',
+      body: noticeFormData(payload),
+    }),
+  buildNoticeAttachmentUrl: (loginId: string, noticeId: number, attachmentId: number) =>
+    buildApiUrl(`/api/notices/${pathSegment(loginId)}/${pathSegment(noticeId)}/attachments/${pathSegment(attachmentId)}`),
   listUsers: () => request<UserSummary[]>('/api/admin/users'),
   listClassrooms: () => request<Classroom[]>('/api/admin/classrooms'),
   listClassroomNetworks: () => request<ClassroomNetwork[]>('/api/admin/classroom-networks'),
@@ -943,6 +1091,17 @@ export const api = {
     request<AttendanceHistory>(`/api/professors/${professorId}/courses/${courseCode}/attendance/students/${studentId}/history`),
   getProfessorAttendanceStudentStats: (professorId: string, courseCode: string) =>
     request<ProfessorAttendanceStudentStats>(`/api/professors/${professorId}/courses/${courseCode}/attendance/student-stats`),
+  createProfessorAttendanceCsvExport: (professorId: string, courseCode: string) =>
+    request<ReportExport>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/attendance/report-exports`, {
+      method: 'POST',
+      body: JSON.stringify({ export_type: 'attendance_csv' }),
+    }),
+  listProfessorAttendanceReportExports: (professorId: string, courseCode: string) =>
+    request<ReportExport[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/attendance/report-exports`),
+  buildProfessorAttendanceReportExportUrl: (professorId: string, courseCode: string, exportId: number) =>
+    buildApiUrl(
+      `/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/attendance/report-exports/${pathSegment(exportId)}/download`,
+    ),
   listStudentActiveAttendanceSessions: (studentId: string, courseCode: string) =>
     request<StudentActiveAttendanceSessions>(`/api/students/${studentId}/courses/${courseCode}/attendance/active-sessions`),
   getStudentAttendanceSemesterMatrix: (studentId: string, courseCode: string) =>
