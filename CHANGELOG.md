@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.2.1...smart-class-front-v0.3.0) (2026-05-10)
+
+
+### Features
+
+* **frontend:** add assignment workflow ui ([498ddce](https://github.com/ChosunUniv2026Capstone/Front/commit/498ddce7bbe5e29be42ade84fdf7dd90ccfa7e8d))
+
 ## [0.2.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.2.0...smart-class-front-v0.2.1) (2026-04-26)
 
 
