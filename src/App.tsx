@@ -2497,6 +2497,25 @@ function App() {
                   <p key={`${selectedNotice.id}-${index}`}>{line || '\u00A0'}</p>
                 ))}
               </div>
+              {selectedNotice.attachments?.length ? (
+                <div className="assignment-attachment-stack">
+                  <h4>첨부 파일</h4>
+                  <div className="assignment-attachment-list">
+                    {selectedNotice.attachments.map((attachment) => (
+                      <a
+                        key={attachment.id}
+                        href={currentUser ? api.buildNoticeAttachmentUrl(currentUser.login_id, selectedNotice.id, attachment.id) : '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="assignment-attachment-chip"
+                      >
+                        <span>{attachment.original_filename}</span>
+                        <small>{formatFileSize(attachment.file_size_bytes)}</small>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </SectionCard>
         </div>
@@ -3073,7 +3092,7 @@ function App() {
     return (
       <div className="course-stack">
         {isProfessor ? (
-          <SectionCard title="자료·영상 등록" action={<span className="caption-text">세션 한정 임시 스캐폴드입니다.</span>}>
+          <SectionCard title="자료·영상 등록" action={<span className="caption-text">Backend 저장 API에 등록됩니다.</span>}>
             <form className="stack" onSubmit={handleAddLearningItem}>
               <div className="field-grid field-grid--3">
                 <label>
@@ -3136,12 +3155,12 @@ function App() {
           title="학습 자료·영상"
           action={(
             <>
-              <span className="info-chip">임시 스캐폴드</span>
+              <span className="info-chip">Backend 저장</span>
               <span className="info-chip">총 {courseLearningItems.length}건</span>
             </>
           )}
         >
-          <p className="caption-text">현재 세션에서만 유지되며 Backend 또는 DB 에 저장되지 않습니다.</p>
+          <p className="caption-text">Backend 파일 API에 저장되며 첨부는 인증된 다운로드 링크로만 열립니다.</p>
           <div className="content-toolbar">
             <div className="content-filter-group">
               {(['all', 'material', 'video'] as const).map((item) => (
@@ -3183,7 +3202,7 @@ function App() {
                     </button>
                     <div className="content-actions">
                       <button type="button" className="text-button" onClick={() => setSelectedLearningItem(item)}>
-                        {item.kind === 'video' ? '임시 보기' : '임시 열람'}
+                        {item.kind === 'video' ? '영상 보기' : '자료 열람'}
                       </button>
                       {isProfessor ? (
                         <button type="button" className="text-button danger-text" onClick={() => handleDeleteLearningItem(item.id)}>
@@ -3222,7 +3241,7 @@ function App() {
                       </div>
                       <div className="helper-row">
                         <strong>상태</strong>
-                        <span>임시 미리보기 / 세션 한정</span>
+                        <span>Backend 저장 / 인증 다운로드</span>
                       </div>
                     </div>
                     {selectedLearningItem.attachments.length > 0 ? (
