@@ -5,12 +5,17 @@ import {
   buildAttendanceWebSocketUrl,
   type AttendanceHistory,
   type ExamSummary,
+  type ProfessorAssignmentCreatePayload,
+  type ProfessorAssignmentDetail,
+  type ProfessorAssignmentSummary,
   type ProfessorAttendanceStudentStats,
   type ProfessorExamCreatePayload,
   type ProfessorExamDetail,
   type AttendanceSlot,
   type AttendanceTimeline,
   type AttendanceSessionRoster,
+  type StudentAssignmentDetail,
+  type StudentAssignmentSummary,
   type StudentExamDetail,
   type StudentExamQuestion,
   type StudentExamSummary,
@@ -81,6 +86,13 @@ type ProfessorExamDraft = {
   questions: ProfessorExamDraftQuestion[]
 }
 
+type ProfessorAssignmentDraft = {
+  title: string
+  description: string
+  opensAt: string
+  dueAt: string
+}
+
 const ROLE_LABEL: Record<LoginUser['role'], string> = {
   student: '학생',
   professor: '교수',
@@ -114,6 +126,19 @@ const EXAM_STATUS_LABEL: Record<ExamSummary['status'], string> = {
   open: '진행 중',
   closed: '종료',
   archived: '보관',
+}
+
+function getAssignmentStatusMeta(status: StudentAssignmentSummary['status'] | ProfessorAssignmentSummary['status']) {
+  switch (status) {
+    case 'upcoming':
+      return { label: '예정', tone: 'upcoming' as const }
+    case 'open':
+      return { label: '진행 중', tone: 'live' as const }
+    case 'closed':
+      return { label: '마감', tone: 'closed' as const }
+    default:
+      return { label: status, tone: 'draft' as const }
+  }
 }
 
 function getStudentExamStatusMeta(exam: StudentExamSummary) {
@@ -235,6 +260,13 @@ function getEligibilityReasonLabel(reasonCode?: string | null) {
     default:
       return '현재 조건으로는 확인이 제한되었습니다.'
   }
+}
+
+function formatFileSize(bytes?: number | null) {
+  if (bytes == null || Number.isNaN(bytes)) return '-'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function createLearningSeed(courses: Course[], authorName?: string) {
@@ -397,6 +429,28 @@ function createDefaultProfessorExamDraft(): ProfessorExamDraft {
   }
 }
 
+function createDefaultProfessorAssignmentDraft(): ProfessorAssignmentDraft {
+  const opensAt = new Date()
+  opensAt.setMinutes(Math.ceil(opensAt.getMinutes() / 10) * 10, 0, 0)
+  const dueAt = new Date(opensAt.getTime() + 7 * 24 * 60 * 60 * 1000)
+
+  return {
+    title: '',
+    description: '',
+    opensAt: toDateTimeLocalInputValue(opensAt),
+    dueAt: toDateTimeLocalInputValue(dueAt),
+  }
+}
+
+function toProfessorAssignmentPayload(draft: ProfessorAssignmentDraft): ProfessorAssignmentCreatePayload {
+  return {
+    title: draft.title.trim(),
+    description: draft.description.trim() || null,
+    opens_at: toApiDateTime(draft.opensAt),
+    due_at: toApiDateTime(draft.dueAt),
+  }
+}
+
 function normalizeProfessorEditableExamType(examType: ExamSummary['exam_type']): ProfessorExamDraft['examType'] {
   return examType === 'final' ? 'final' : 'midterm'
 }
@@ -536,6 +590,17 @@ function App() {
   const [studentAttendanceSessions, setStudentAttendanceSessions] = useState<
     Awaited<ReturnType<typeof api.listStudentActiveAttendanceSessions>>['sessions']
   >([])
+  const [studentAssignments, setStudentAssignments] = useState<StudentAssignmentSummary[]>([])
+  const [studentAssignmentDetail, setStudentAssignmentDetail] = useState<StudentAssignmentDetail | null>(null)
+  const [studentAssignmentText, setStudentAssignmentText] = useState('')
+  const [studentAssignmentFiles, setStudentAssignmentFiles] = useState<File[]>([])
+  const [professorAssignments, setProfessorAssignments] = useState<ProfessorAssignmentSummary[]>([])
+  const [professorAssignmentDetail, setProfessorAssignmentDetail] = useState<ProfessorAssignmentDetail | null>(null)
+  const [selectedProfessorAssignmentSubmissionId, setSelectedProfessorAssignmentSubmissionId] = useState<number | null>(null)
+  const [professorAssignmentDraft, setProfessorAssignmentDraft] = useState<ProfessorAssignmentDraft>(() => createDefaultProfessorAssignmentDraft())
+  const [assignmentLoading, setAssignmentLoading] = useState(false)
+  const [assignmentBusyKey, setAssignmentBusyKey] = useState<string | null>(null)
+  const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null)
   const [studentExams, setStudentExams] = useState<StudentExamSummary[]>([])
   const [studentExamDetail, setStudentExamDetail] = useState<StudentExamDetail | null>(null)
   const [studentExamQuestionIndex, setStudentExamQuestionIndex] = useState(0)
@@ -578,6 +643,7 @@ function App() {
     : 'timeline'
   const routeProjectionKey = route.kind === 'course' && route.section === 'attendance' ? route.projectionKey ?? null : null
   const routeSessionId = route.kind === 'course' && route.section === 'attendance' ? route.sessionId ?? null : null
+  const routeAssignmentId = route.kind === 'course' && route.section === 'assignments' ? route.assignmentId ?? null : null
   const routeExamId = route.kind === 'course' && route.section === 'exams' ? route.examId ?? null : null
   const inStudentExamMode = route.kind === 'course' && route.section === 'exams' && route.examMode === 'take' && currentUser?.role === 'student'
 
@@ -848,6 +914,15 @@ function App() {
     setAttendanceStudentStats(null)
     setAttendanceSemesterMatrix(null)
     setStudentAttendanceSessions([])
+    setStudentAssignments([])
+    setStudentAssignmentDetail(null)
+    setStudentAssignmentText('')
+    setStudentAssignmentFiles([])
+    setProfessorAssignments([])
+    setProfessorAssignmentDetail(null)
+    setSelectedProfessorAssignmentSubmissionId(null)
+    setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
+    setAssignmentMessage(null)
     setAttendanceModalOpen(false)
     setAttendanceModalAnchorSlot(null)
     setSelectedBatchProjectionKeys([])
@@ -959,6 +1034,15 @@ function App() {
   function openCourse(course: Course) {
     setSelectedCourse(course)
     setEligibility(null)
+    setStudentAssignments([])
+    setStudentAssignmentDetail(null)
+    setStudentAssignmentText('')
+    setStudentAssignmentFiles([])
+    setProfessorAssignments([])
+    setProfessorAssignmentDetail(null)
+    setSelectedProfessorAssignmentSubmissionId(null)
+    setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
+    setAssignmentMessage(null)
     setStudentExams([])
     setStudentExamDetail(null)
     setStudentExamSubmitWarning([])
@@ -1304,6 +1388,121 @@ function App() {
     return () => socket.close()
   }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
 
+  const loadStudentAssignmentList = useCallback(async (courseCode = selectedCourse?.course_code) => {
+    if (!currentUser || currentUser.role !== 'student' || !courseCode) return
+    const nextAssignments = await api.listStudentAssignments(currentUser.login_id, courseCode)
+    setStudentAssignments(nextAssignments)
+  }, [currentUser, selectedCourse?.course_code])
+
+  async function loadProfessorAssignmentList(courseCode = selectedCourse?.course_code) {
+    if (!currentUser || currentUser.role !== 'professor' || !courseCode) return
+    const nextAssignments = await api.listProfessorAssignments(currentUser.login_id, courseCode)
+    setProfessorAssignments(nextAssignments)
+  }
+
+  const openStudentAssignmentDetail = useCallback(async (assignmentId: number) => {
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
+    setAssignmentLoading(true)
+    try {
+      setError(null)
+      const detail = await api.getStudentAssignmentDetail(currentUser.login_id, selectedCourse.course_code, assignmentId)
+      setStudentAssignmentDetail(detail)
+      setStudentAssignmentText(detail.submission?.submission_text ?? '')
+      setStudentAssignmentFiles([])
+      navigate({
+        kind: 'course',
+        courseCode: selectedCourse.course_code,
+        section: 'assignments',
+        assignmentId,
+      }, { replace: true })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '과제 상세를 불러오지 못했습니다.')
+    } finally {
+      setAssignmentLoading(false)
+    }
+  }, [currentUser, navigate, selectedCourse])
+
+  async function openProfessorAssignmentDetail(assignmentId: number) {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    setAssignmentLoading(true)
+    try {
+      setError(null)
+      const detail = await api.getProfessorAssignmentDetail(currentUser.login_id, selectedCourse.course_code, assignmentId)
+      setProfessorAssignmentDetail(detail)
+      navigate({
+        kind: 'course',
+        courseCode: selectedCourse.course_code,
+        section: 'assignments',
+        assignmentId,
+      }, { replace: true })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '과제 상세를 불러오지 못했습니다.')
+    } finally {
+      setAssignmentLoading(false)
+    }
+  }
+
+  async function handleProfessorAssignmentCreate(event: FormEvent) {
+    event.preventDefault()
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+
+    const payload = toProfessorAssignmentPayload(professorAssignmentDraft)
+    if (!payload.title) {
+      setError('과제명은 비워둘 수 없습니다.')
+      return
+    }
+
+    setAssignmentBusyKey('assignment-create')
+    try {
+      setError(null)
+      setAssignmentMessage(null)
+      const detail = await api.createProfessorAssignment(currentUser.login_id, selectedCourse.course_code, payload)
+      setProfessorAssignmentDetail(detail)
+      setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
+      setAssignmentMessage('과제를 등록했습니다.')
+      await loadProfessorAssignmentList(selectedCourse.course_code)
+      navigate({
+        kind: 'course',
+        courseCode: selectedCourse.course_code,
+        section: 'assignments',
+        assignmentId: detail.id,
+      }, { replace: true })
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '과제를 등록하지 못했습니다.')
+    } finally {
+      setAssignmentBusyKey(null)
+    }
+  }
+
+  async function handleStudentAssignmentSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse || !studentAssignmentDetail) return
+
+    setAssignmentBusyKey(`assignment-submit-${studentAssignmentDetail.id}`)
+    try {
+      setError(null)
+      setAssignmentMessage(null)
+      const detail = await api.submitStudentAssignment(
+        currentUser.login_id,
+        selectedCourse.course_code,
+        studentAssignmentDetail.id,
+        {
+          submission_text: studentAssignmentText,
+          files: studentAssignmentFiles,
+        },
+      )
+      setStudentAssignmentDetail(detail)
+      setStudentAssignmentText(detail.submission?.submission_text ?? '')
+      setStudentAssignmentFiles([])
+      setAssignmentMessage('과제를 제출했습니다.')
+      await loadStudentAssignmentList(selectedCourse.course_code)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '과제를 제출하지 못했습니다.')
+    } finally {
+      setAssignmentBusyKey(null)
+    }
+  }
+
   const loadStudentExamList = useCallback(async (courseCode = selectedCourse?.course_code) => {
     if (!currentUser || currentUser.role !== 'student' || !courseCode) return
     const nextExams = await api.listStudentExams(currentUser.login_id, courseCode)
@@ -1598,6 +1797,70 @@ function App() {
   }, [currentUser, loadStudentExamList, navigate, openStudentExamDetail, selectedCourse, studentExamDetail])
 
   useEffect(() => {
+    if (courseSection !== 'assignments' || !selectedCourse || !currentUser) return
+    let cancelled = false
+
+    ;(async () => {
+      setAssignmentLoading(true)
+      try {
+        if (currentUser.role === 'student') {
+          const nextAssignments = await api.listStudentAssignments(currentUser.login_id, selectedCourse.course_code)
+          if (cancelled) return
+          setStudentAssignments(nextAssignments)
+          if (routeAssignmentId) {
+            const detail = await api.getStudentAssignmentDetail(currentUser.login_id, selectedCourse.course_code, routeAssignmentId)
+            if (cancelled) return
+            setStudentAssignmentDetail(detail)
+            setStudentAssignmentText(detail.submission?.submission_text ?? '')
+            setStudentAssignmentFiles([])
+          } else {
+            setStudentAssignmentDetail(null)
+            setStudentAssignmentText('')
+            setStudentAssignmentFiles([])
+          }
+        } else if (currentUser.role === 'professor') {
+          const nextAssignments = await api.listProfessorAssignments(currentUser.login_id, selectedCourse.course_code)
+          if (cancelled) return
+          setProfessorAssignments(nextAssignments)
+          if (routeAssignmentId) {
+            const detail = await api.getProfessorAssignmentDetail(currentUser.login_id, selectedCourse.course_code, routeAssignmentId)
+            if (cancelled) return
+            setProfessorAssignmentDetail(detail)
+          } else {
+            setProfessorAssignmentDetail(null)
+          }
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setError(caughtError instanceof Error ? caughtError.message : '과제 정보를 불러오지 못했습니다.')
+        }
+      } finally {
+        if (!cancelled) {
+          setAssignmentLoading(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [courseSection, currentUser, routeAssignmentId, selectedCourse])
+
+  useEffect(() => {
+    if (!professorAssignmentDetail) {
+      setSelectedProfessorAssignmentSubmissionId(null)
+      return
+    }
+
+    setSelectedProfessorAssignmentSubmissionId((current) => {
+      if (current && professorAssignmentDetail.submissions.some((submission) => submission.id === current)) {
+        return current
+      }
+      return professorAssignmentDetail.submissions[0]?.id ?? null
+    })
+  }, [professorAssignmentDetail])
+
+  useEffect(() => {
     if (courseSection !== 'exams' || !selectedCourse || !currentUser) return
     let cancelled = false
 
@@ -1784,6 +2047,15 @@ function App() {
 
     if (selectedCourse?.course_code !== nextCourse.course_code) {
       setEligibility(null)
+      setStudentAssignments([])
+      setStudentAssignmentDetail(null)
+      setStudentAssignmentText('')
+      setStudentAssignmentFiles([])
+      setProfessorAssignments([])
+      setProfessorAssignmentDetail(null)
+      setSelectedProfessorAssignmentSubmissionId(null)
+      setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
+      setAssignmentMessage(null)
       setStudentExams([])
       setStudentExamDetail(null)
       setProfessorExams([])
@@ -1949,11 +2221,11 @@ function App() {
     ]
 
     if (isStudent) {
-      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 확인' }]
+      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 확인' }]
     }
 
     if (isProfessor) {
-      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 탭' }, { id: 'manage', label: '강의 운영' }]
+      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 탭' }, { id: 'manage', label: '강의 운영' }]
     }
 
     return commonItems
@@ -4193,6 +4465,395 @@ function App() {
     )
   }
 
+  function renderCourseAssignments() {
+    function renderStudentAssignmentSection() {
+      return (
+        <div className="course-stack assignment-space assignment-space--student">
+          {assignmentMessage ? <p className="banner banner--success">{assignmentMessage}</p> : null}
+
+          <SectionCard title="과제 목록" action={<span className="info-chip">{studentAssignments.length}건</span>}>
+            {assignmentLoading ? <p className="empty-state">과제 목록을 불러오는 중입니다.</p> : null}
+            {!assignmentLoading && studentAssignments.length === 0 ? <p className="empty-state">등록된 과제가 없습니다.</p> : null}
+            {studentAssignments.length > 0 ? (
+              <div className="exam-list-grid">
+                {studentAssignments.map((assignment) => {
+                  const statusMeta = getAssignmentStatusMeta(assignment.status)
+                  return (
+                    <article key={assignment.id} className="exam-list-card exam-list-card--student">
+                      <div className="exam-list-card-top">
+                        <div className="exam-card-copy">
+                          <strong>{assignment.title}</strong>
+                          <p>{assignment.description ?? '과제 설명이 아직 없습니다.'}</p>
+                        </div>
+                        <span className={`status-pill status-pill--${statusMeta.tone}`}>{statusMeta.label}</span>
+                      </div>
+                      <div className="exam-fact-grid">
+                        <article className="exam-fact-card">
+                          <span>공개</span>
+                          <strong>{formatExamDateTime(assignment.opens_at)}</strong>
+                        </article>
+                        <article className="exam-fact-card">
+                          <span>마감</span>
+                          <strong>{formatExamDateTime(assignment.due_at)}</strong>
+                        </article>
+                        <article className="exam-fact-card">
+                          <span>제출 상태</span>
+                          <strong>{assignment.submitted ? '제출 완료' : '미제출'}</strong>
+                        </article>
+                        <article className="exam-fact-card">
+                          <span>첨부 수</span>
+                          <strong>{assignment.attachment_count}개</strong>
+                        </article>
+                      </div>
+                      <div className="exam-detail-actions">
+                        <button type="button" className="text-button" onClick={() => void openStudentAssignmentDetail(assignment.id)}>
+                          상세 보기
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            ) : null}
+          </SectionCard>
+
+          {studentAssignmentDetail ? (
+            <SectionCard
+              title={`과제 상세 · ${studentAssignmentDetail.title}`}
+              action={(() => {
+                const statusMeta = getAssignmentStatusMeta(studentAssignmentDetail.status)
+                return <span className={`status-pill status-pill--${statusMeta.tone}`}>{statusMeta.label}</span>
+              })()}
+            >
+              <div className="exam-detail-grid">
+                <article className="exam-detail-panel exam-detail-panel--summary">
+                  <div className="exam-fact-grid">
+                    <article className="exam-fact-card exam-fact-card--wide">
+                      <span>과제 설명</span>
+                      <strong>{studentAssignmentDetail.description ?? '과제 설명이 아직 없습니다.'}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>공개</span>
+                      <strong>{formatExamDateTime(studentAssignmentDetail.opens_at)}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>마감</span>
+                      <strong>{formatExamDateTime(studentAssignmentDetail.due_at)}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>최근 제출</span>
+                      <strong>{formatDateTime(studentAssignmentDetail.submission?.submitted_at)}</strong>
+                    </article>
+                  </div>
+                  {studentAssignmentDetail.submission?.attachments?.length ? (
+                    <div className="assignment-attachment-stack">
+                      <strong>현재 첨부 파일</strong>
+                      <div className="assignment-attachment-list">
+                        {studentAssignmentDetail.submission.attachments.map((attachment) => (
+                          <a
+                            key={attachment.id}
+                            className="assignment-attachment-chip"
+                            href={api.buildStudentAssignmentAttachmentUrl(
+                              currentUser!.login_id,
+                              selectedCourse!.course_code,
+                              studentAssignmentDetail.id,
+                              attachment.id,
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <span>{attachment.original_filename}</span>
+                            <small>{formatFileSize(attachment.file_size_bytes)}</small>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="empty-state">아직 제출한 첨부 파일이 없습니다.</p>
+                  )}
+                </article>
+
+                <article className="exam-detail-panel exam-detail-panel--submissions">
+                  <header className="section-head">
+                    <h3>과제 제출</h3>
+                    <span className="caption-text">글과 파일을 함께 제출할 수 있습니다.</span>
+                  </header>
+                  <form className="assignment-form" onSubmit={handleStudentAssignmentSubmit}>
+                    <label>
+                      제출 내용
+                      <textarea
+                        rows={8}
+                        value={studentAssignmentText}
+                        onChange={(event) => setStudentAssignmentText(event.target.value)}
+                        placeholder="교수님께 전달할 설명이나 작업 내용을 입력하세요."
+                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
+                      />
+                    </label>
+                    <label>
+                      파일 첨부
+                      <input
+                        type="file"
+                        multiple
+                        onChange={(event) => setStudentAssignmentFiles(Array.from(event.target.files ?? []))}
+                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
+                      />
+                    </label>
+                    {studentAssignmentFiles.length > 0 ? (
+                      <div className="assignment-pending-files">
+                        {studentAssignmentFiles.map((file) => (
+                          <span key={`${file.name}-${file.size}-${file.lastModified}`} className="assignment-attachment-chip">
+                            <span>{file.name}</span>
+                            <small>{formatFileSize(file.size)}</small>
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="exam-detail-actions">
+                      <button
+                        type="submit"
+                        className="primary-button"
+                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
+                      >
+                        {assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}` ? '제출 중...' : '과제 제출'}
+                      </button>
+                      {studentAssignmentDetail.status !== 'open' ? (
+                        <span className="caption-text">진행 중인 과제만 제출하거나 수정할 수 있습니다.</span>
+                      ) : (
+                        <span className="caption-text">새 파일을 고르면 기존 첨부 파일이 교체됩니다.</span>
+                      )}
+                    </div>
+                  </form>
+                </article>
+              </div>
+            </SectionCard>
+          ) : null}
+        </div>
+      )
+    }
+
+    function renderProfessorAssignmentSection() {
+      const selectedSubmission = professorAssignmentDetail?.submissions.find(
+        (submission) => submission.id === selectedProfessorAssignmentSubmissionId,
+      ) ?? professorAssignmentDetail?.submissions[0] ?? null
+
+      return (
+        <div className="course-stack assignment-space assignment-space--professor">
+          {assignmentMessage ? <p className="banner banner--success">{assignmentMessage}</p> : null}
+
+          <SectionCard title="과제 등록">
+            <form className="assignment-form" onSubmit={handleProfessorAssignmentCreate}>
+              <div className="assignment-form-grid">
+                <label>
+                  과제명
+                  <input
+                    value={professorAssignmentDraft.title}
+                    onChange={(event) => setProfessorAssignmentDraft((current) => ({ ...current, title: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  공개 시작
+                  <input
+                    type="datetime-local"
+                    value={professorAssignmentDraft.opensAt}
+                    onChange={(event) => setProfessorAssignmentDraft((current) => ({ ...current, opensAt: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  마감일
+                  <input
+                    type="datetime-local"
+                    value={professorAssignmentDraft.dueAt}
+                    onChange={(event) => setProfessorAssignmentDraft((current) => ({ ...current, dueAt: event.target.value }))}
+                  />
+                </label>
+              </div>
+              <label>
+                과제 설명
+                <textarea
+                  rows={5}
+                  value={professorAssignmentDraft.description}
+                  onChange={(event) => setProfessorAssignmentDraft((current) => ({ ...current, description: event.target.value }))}
+                  placeholder="학생에게 필요한 제출 형식이나 유의사항을 입력하세요."
+                />
+              </label>
+              <div className="exam-detail-actions">
+                <button type="submit" className="primary-button" disabled={assignmentBusyKey === 'assignment-create'}>
+                  {assignmentBusyKey === 'assignment-create' ? '등록 중...' : '과제 등록'}
+                </button>
+              </div>
+            </form>
+          </SectionCard>
+
+          <SectionCard title="과제 목록" action={<span className="info-chip">{professorAssignments.length}건</span>}>
+            {assignmentLoading ? <p className="empty-state">과제 목록을 불러오는 중입니다.</p> : null}
+            {!assignmentLoading && professorAssignments.length === 0 ? <p className="empty-state">등록된 과제가 없습니다.</p> : null}
+            {professorAssignments.length > 0 ? (
+              <div className="exam-list-grid">
+                {professorAssignments.map((assignment) => {
+                  const statusMeta = getAssignmentStatusMeta(assignment.status)
+                  return (
+                    <article key={assignment.id} className="exam-list-card exam-list-card--professor">
+                      <div className="exam-list-card-top">
+                        <div className="exam-card-copy">
+                          <strong>{assignment.title}</strong>
+                          <p>{assignment.description ?? '과제 설명이 아직 없습니다.'}</p>
+                        </div>
+                        <span className={`status-pill status-pill--${statusMeta.tone}`}>{statusMeta.label}</span>
+                      </div>
+                      <div className="exam-fact-grid">
+                        <article className="exam-fact-card">
+                          <span>공개</span>
+                          <strong>{formatExamDateTime(assignment.opens_at)}</strong>
+                        </article>
+                        <article className="exam-fact-card">
+                          <span>마감</span>
+                          <strong>{formatExamDateTime(assignment.due_at)}</strong>
+                        </article>
+                        <article className="exam-fact-card">
+                          <span>제출자</span>
+                          <strong>{assignment.submission_count}명</strong>
+                        </article>
+                        <article className="exam-fact-card">
+                          <span>수강 인원</span>
+                          <strong>{assignment.total_students}명</strong>
+                        </article>
+                      </div>
+                      <div className="exam-detail-actions">
+                        <button type="button" className="text-button" onClick={() => void openProfessorAssignmentDetail(assignment.id)}>
+                          제출 현황 보기
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            ) : null}
+          </SectionCard>
+
+          {professorAssignmentDetail ? (
+            <SectionCard
+              title={`과제 상세 · ${professorAssignmentDetail.title}`}
+              action={(() => {
+                const statusMeta = getAssignmentStatusMeta(professorAssignmentDetail.status)
+                return <span className={`status-pill status-pill--${statusMeta.tone}`}>{statusMeta.label}</span>
+              })()}
+            >
+              <div className="exam-detail-grid">
+                <article className="exam-detail-panel exam-detail-panel--summary">
+                  <div className="exam-fact-grid">
+                    <article className="exam-fact-card exam-fact-card--wide">
+                      <span>과제 설명</span>
+                      <strong>{professorAssignmentDetail.description ?? '과제 설명이 아직 없습니다.'}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>공개</span>
+                      <strong>{formatExamDateTime(professorAssignmentDetail.opens_at)}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>마감</span>
+                      <strong>{formatExamDateTime(professorAssignmentDetail.due_at)}</strong>
+                    </article>
+                    <article className="exam-fact-card">
+                      <span>제출자</span>
+                      <strong>{professorAssignmentDetail.submission_count} / {professorAssignmentDetail.total_students}</strong>
+                    </article>
+                  </div>
+                </article>
+
+                <article className="exam-detail-panel exam-detail-panel--submissions">
+                  <header className="section-head">
+                    <h3>제출 현황</h3>
+                    <span className="caption-text">{professorAssignmentDetail.submissions.length}명 제출</span>
+                  </header>
+                  {professorAssignmentDetail.submissions.length === 0 ? (
+                    <p className="empty-state">아직 제출한 학생이 없습니다.</p>
+                  ) : (
+                    <div className="assignment-submission-browser">
+                      <div className="assignment-submission-roster assignment-submission-roster--inline">
+                        {professorAssignmentDetail.submissions.map((submission) => (
+                          <button
+                            key={submission.id}
+                            type="button"
+                            className={`assignment-submission-row${selectedSubmission?.id === submission.id ? ' is-active' : ''}`}
+                            onClick={() => setSelectedProfessorAssignmentSubmissionId(submission.id)}
+                          >
+                            <div className="assignment-submission-row-main">
+                              <strong>{submission.student_name}</strong>
+                              <span className="info-chip">{submission.student_id}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+
+                      {selectedSubmission ? (
+                        <article className="exam-submission-item assignment-submission-detail">
+                          <div className="exam-submission-item-head">
+                            <strong>{selectedSubmission.student_name}</strong>
+                            <span className="info-chip">{selectedSubmission.student_id}</span>
+                          </div>
+                          <div className="assignment-meta-grid">
+                            <article className="exam-fact-card">
+                              <span>제출 시간</span>
+                              <strong>{formatDateTime(selectedSubmission.submitted_at)}</strong>
+                            </article>
+                            <article className="exam-fact-card">
+                              <span>첨부 파일</span>
+                              <strong>{selectedSubmission.attachments.length}개</strong>
+                            </article>
+                          </div>
+                          <div className="assignment-body-panel">
+                            <strong>제출 본문</strong>
+                            <p>{selectedSubmission.submission_text ?? '제출 본문 없이 파일만 제출했습니다.'}</p>
+                          </div>
+                          {selectedSubmission.attachments.length > 0 ? (
+                            <div className="assignment-attachment-stack">
+                              <strong>첨부 파일</strong>
+                              <div className="assignment-attachment-list">
+                                {selectedSubmission.attachments.map((attachment) => (
+                                  <a
+                                    key={attachment.id}
+                                    className="assignment-attachment-chip"
+                                    href={api.buildProfessorAssignmentAttachmentUrl(
+                                      currentUser!.login_id,
+                                      selectedCourse!.course_code,
+                                      professorAssignmentDetail.id,
+                                      attachment.id,
+                                    )}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <span>{attachment.original_filename}</span>
+                                    <small>{formatFileSize(attachment.file_size_bytes)}</small>
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </article>
+                      ) : null}
+                    </div>
+                  )}
+                </article>
+              </div>
+            </SectionCard>
+          ) : null}
+        </div>
+      )
+    }
+
+    if (isStudent) {
+      return renderStudentAssignmentSection()
+    }
+    if (isProfessor) {
+      return renderProfessorAssignmentSection()
+    }
+    return (
+      <SectionCard title="과제">
+        <p className="empty-state">관리자 계정에서는 과제 화면을 직접 사용할 수 없습니다.</p>
+      </SectionCard>
+    )
+  }
+
   function renderCourseExams() {
     if (isStudent) {
       return renderStudentExamSection()
@@ -4272,6 +4933,7 @@ function App() {
           {courseSection === 'overview' ? renderCourseOverview() : null}
           {courseSection === 'content' ? renderCourseContent() : null}
           {courseSection === 'notices' ? renderCourseNotices() : null}
+          {courseSection === 'assignments' ? renderCourseAssignments() : null}
           {courseSection === 'exams' ? renderCourseExams() : null}
           {courseSection === 'attendance' ? renderCourseAttendance() : null}
           {courseSection === 'manage' ? renderCourseManage() : null}

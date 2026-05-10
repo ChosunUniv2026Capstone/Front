@@ -35,6 +35,74 @@ export type Notice = {
   created_at?: string | null
 }
 
+export type AssignmentStatus = 'upcoming' | 'open' | 'closed'
+
+export type AssignmentAttachment = {
+  id: number
+  original_filename: string
+  mime_type?: string | null
+  file_size_bytes: number
+  uploaded_at?: string | null
+}
+
+export type StudentAssignmentSubmission = {
+  id: number
+  submission_text?: string | null
+  submitted_at?: string | null
+  updated_at?: string | null
+  attachments: AssignmentAttachment[]
+}
+
+export type StudentAssignmentSummary = {
+  id: number
+  title: string
+  description?: string | null
+  opens_at: string
+  due_at: string
+  status: AssignmentStatus
+  created_at?: string | null
+  submitted: boolean
+  submitted_at?: string | null
+  attachment_count: number
+}
+
+export type StudentAssignmentDetail = StudentAssignmentSummary & {
+  submission?: StudentAssignmentSubmission | null
+}
+
+export type ProfessorAssignmentSubmission = {
+  id: number
+  student_id: string
+  student_name: string
+  submission_text?: string | null
+  submitted_at?: string | null
+  updated_at?: string | null
+  attachments: AssignmentAttachment[]
+}
+
+export type ProfessorAssignmentSummary = {
+  id: number
+  title: string
+  description?: string | null
+  opens_at: string
+  due_at: string
+  status: AssignmentStatus
+  created_at?: string | null
+  submission_count: number
+  total_students: number
+}
+
+export type ProfessorAssignmentDetail = ProfessorAssignmentSummary & {
+  submissions: ProfessorAssignmentSubmission[]
+}
+
+export type ProfessorAssignmentCreatePayload = {
+  title: string
+  description?: string | null
+  opens_at: string
+  due_at: string
+}
+
 export type ExamSummary = {
   id: number
   title: string
@@ -557,12 +625,14 @@ function shouldTrySessionRefresh(path: string) {
 }
 
 async function requestInternal<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
+  const headers = new Headers(init?.headers ?? {})
+  if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers,
     ...init,
   })
 
@@ -648,6 +718,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return requestInternal<T>(path, init)
 }
 
+function buildApiUrl(path: string) {
+  return `${API_BASE}${path}`
+}
+
+function pathSegment(value: string | number) {
+  return encodeURIComponent(String(value))
+}
+
 export const api = {
   health: () => request<{ status?: string }>('/health'),
   login: (payload: { login_id: string; password: string }) =>
@@ -672,6 +750,57 @@ export const api = {
     }),
   listStudentCourses: (studentId: string) => request<Course[]>(`/api/students/${studentId}/courses`),
   listProfessorCourses: (professorId: string) => request<Course[]>(`/api/professors/${professorId}/courses`),
+  listStudentAssignments: (studentId: string, courseCode: string) =>
+    request<StudentAssignmentSummary[]>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments`),
+  getStudentAssignmentDetail: (studentId: string, courseCode: string, assignmentId: number) =>
+    request<StudentAssignmentDetail>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}`),
+  submitStudentAssignment: (
+    studentId: string,
+    courseCode: string,
+    assignmentId: number,
+    payload: {
+      submission_text?: string | null
+      files?: File[]
+    },
+  ) => {
+    const formData = new FormData()
+    if (payload.submission_text != null) {
+      formData.append('submission_text', payload.submission_text)
+    }
+    for (const file of payload.files ?? []) {
+      formData.append('files', file)
+    }
+    return request<StudentAssignmentDetail>(
+      `/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/submission`,
+      {
+        method: 'POST',
+        body: formData,
+      },
+    )
+  },
+  buildStudentAssignmentAttachmentUrl: (
+    studentId: string,
+    courseCode: string,
+    assignmentId: number,
+    attachmentId: number,
+  ) =>
+    buildApiUrl(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/attachments/${pathSegment(attachmentId)}`),
+  listProfessorAssignments: (professorId: string, courseCode: string) =>
+    request<ProfessorAssignmentSummary[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments`),
+  getProfessorAssignmentDetail: (professorId: string, courseCode: string, assignmentId: number) =>
+    request<ProfessorAssignmentDetail>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}`),
+  createProfessorAssignment: (professorId: string, courseCode: string, payload: ProfessorAssignmentCreatePayload) =>
+    request<ProfessorAssignmentDetail>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  buildProfessorAssignmentAttachmentUrl: (
+    professorId: string,
+    courseCode: string,
+    assignmentId: number,
+    attachmentId: number,
+  ) =>
+    buildApiUrl(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/attachments/${pathSegment(attachmentId)}`),
   listStudentExams: (studentId: string, courseCode: string) =>
     request<StudentExamSummary[]>(`/api/students/${studentId}/courses/${courseCode}/exams`),
   getStudentExamDetail: (studentId: string, courseCode: string, examId: number) =>

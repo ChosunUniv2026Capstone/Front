@@ -1,4 +1,4 @@
-export type CourseSection = 'overview' | 'content' | 'notices' | 'exams' | 'attendance' | 'manage'
+export type CourseSection = 'overview' | 'content' | 'notices' | 'assignments' | 'exams' | 'attendance' | 'manage'
 export type AttendancePage = 'timeline' | 'timer' | 'roster'
 
 export type AppRoute =
@@ -13,6 +13,7 @@ export type AppRoute =
       attendancePage?: AttendancePage
       sessionId?: number
       projectionKey?: string
+      assignmentId?: number
       examId?: number
       examMode?: 'take'
     }
@@ -68,6 +69,16 @@ export function parseAppRoute(pathname: string): AppRoute {
     }
   }
 
+  const courseAssignmentDetailMatch = normalizedPath.match(/^\/courses\/([^/]+)\/assignments\/(\d+)$/)
+  if (courseAssignmentDetailMatch) {
+    return {
+      kind: 'course',
+      courseCode: decodeURIComponent(courseAssignmentDetailMatch[1]),
+      section: 'assignments',
+      assignmentId: Number(courseAssignmentDetailMatch[2]),
+    }
+  }
+
   const courseExamTakeMatch = normalizedPath.match(/^\/courses\/([^/]+)\/exams\/(\d+)\/take$/)
   if (courseExamTakeMatch) {
     return {
@@ -79,7 +90,7 @@ export function parseAppRoute(pathname: string): AppRoute {
     }
   }
 
-  const courseSectionMatch = normalizedPath.match(/^\/courses\/([^/]+)\/(content|notices|exams|attendance|manage)$/)
+  const courseSectionMatch = normalizedPath.match(/^\/courses\/([^/]+)\/(content|notices|assignments|exams|attendance|manage)$/)
   if (courseSectionMatch) {
     return {
       kind: 'course',
@@ -114,6 +125,9 @@ export function buildAppPath(route: AppRoute) {
     case 'course': {
       const basePath = `/courses/${encodeURIComponent(route.courseCode)}`
       if (route.section === 'overview') return basePath
+      if (route.section === 'assignments' && route.assignmentId != null) {
+        return `${basePath}/assignments/${route.assignmentId}`
+      }
       if (route.section === 'exams' && route.examMode === 'take' && route.examId != null) {
         return `${basePath}/exams/${route.examId}/take`
       }
