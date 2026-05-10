@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.3.0...smart-class-front-v0.4.0) (2026-05-10)
+
+
+### Features
+
+* **frontend:** keep file flows behind Backend APIs ([a47b345](https://github.com/ChosunUniv2026Capstone/Front/commit/a47b3457edddf8b80cd8a9bface7ae842e57dd39))
+
 ## [0.3.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.2.1...smart-class-front-v0.3.0) (2026-05-10)
 
 
