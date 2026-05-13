@@ -168,6 +168,8 @@ test('admin overlay controls and student eligibility change are visible', async 
   await page.getByLabel('비밀번호').fill('devpass123')
   await page.getByRole('button', { name: '로그인' }).click()
 
+  await expect(page.getByText('관리 기능 범위')).toBeVisible()
+  await expect(page.getByText('조회/데모 MVP')).toBeVisible()
   await page.getByRole('button', { name: '재실 시연 제어 (demo)' }).click()
   await expect(page.getByRole('combobox').nth(1)).toContainText('20201239 / Kim Student 06 / Choi Phone / 52:54:00:12:34:56')
   await page.getByRole('button', { name: '재실 상태 적용' }).click()

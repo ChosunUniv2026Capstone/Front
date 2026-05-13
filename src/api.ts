@@ -347,6 +347,17 @@ export type EligibilityResponse = {
   evidence?: Record<string, unknown>
 }
 
+export type StudentAttendanceSlotEligibility = {
+  projection_key: string
+  eligibility: EligibilityResponse
+}
+
+export type StudentAttendanceEligibilitySummary = {
+  eligible_slot_count: number
+  rejected_slot_count: number
+  per_slot: StudentAttendanceSlotEligibility[]
+}
+
 export type AdminPresenceStation = {
   macAddress: string
   associated?: boolean | null
@@ -526,6 +537,12 @@ export type StudentAttendanceSession = {
   session_id: number
   projection_key: string
   projection_keys?: string[]
+  included_slots?: {
+    projection_key: string
+    display_label?: string | null
+    period_label?: string | null
+    slot_order?: number | null
+  }[]
   slot_labels?: string[]
   display_label: string
   session_date: string
@@ -533,7 +550,7 @@ export type StudentAttendanceSession = {
   slot_end_at: string
   expires_at?: string | null
   can_check_in: boolean
-  eligibility: EligibilityResponse
+  eligibility: EligibilityResponse | StudentAttendanceEligibilitySummary
   version: number
 }
 

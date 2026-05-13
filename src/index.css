@@ -2535,8 +2535,8 @@ code,
 }
 
 .attendance-slot-row {
-  grid-template-columns: auto 1fr;
-  align-items: stretch;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
 }
 
 .attendance-slot-row.active {
@@ -2643,6 +2643,26 @@ code,
 .attendance-slot-main {
   display: grid;
   gap: 6px;
+}
+
+.attendance-slot-restart {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.attendance-eligibility-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.attendance-eligibility-detail span {
+  border: 1px solid #d7e1f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 4px 8px;
 }
 
 .attendance-slot-title {

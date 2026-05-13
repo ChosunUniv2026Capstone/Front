@@ -458,9 +458,26 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
             expires_at: '2099-03-03T15:10:00Z',
             can_check_in: true,
             eligibility: {
-              eligible: true,
-              reason_code: 'ATTENDANCE_CHECK_IN_OK',
-              matched_device_mac: 'AA:BB:CC:DD:EE:FF',
+              eligible_slot_count: 1,
+              rejected_slot_count: 1,
+              per_slot: [
+                {
+                  projection_key: projectionKey,
+                  eligibility: {
+                    eligible: true,
+                    reason_code: 'OK',
+                    matched_device_mac: 'AA:BB:CC:DD:EE:FF',
+                  },
+                },
+                {
+                  projection_key: 'CSE116:B101:2026-03-03:15:30:00:16:00:00',
+                  eligibility: {
+                    eligible: false,
+                    reason_code: 'DEVICE_NOT_PRESENT',
+                    matched_device_mac: null,
+                  },
+                },
+              ],
             },
             version: 1,
           },
@@ -609,6 +626,30 @@ test('revisiting an ended smart route restores to roster instead of stale timer 
   await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
 })
 
+test('ended attendance slot exposes clear restart action instead of hiding reopen flow', async ({ page }) => {
+  await mockProfessorFlowApp(page, {
+    initialSlot: {
+      session_id: 703,
+      session_mode: 'smart',
+      session_status: 'closed',
+      slot_state: 'online',
+      expires_at: null,
+    },
+  })
+
+  await page.goto('/courses/CSE116/attendance')
+
+  await expect(page.getByText('종료된 세션 · 다시 시작 가능')).toBeVisible()
+  await page.getByRole('button', { name: '출석 다시 시작' }).click()
+  await expect(page.getByText('출석 시작 · 2026-03-03')).toBeVisible()
+  await expect(page.getByText('선택된 차시 1건')).toBeVisible()
+  await page.getByRole('button', { name: '스마트출석' }).click()
+  await page.getByRole('button', { name: '선택 차시에 적용' }).click()
+
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/701\/timer$/)
+  await expect(page.getByText('스마트 출석 진행')).toBeVisible()
+})
+
 
 test('closing smart attendance refreshes roster state without requiring manual reload', async ({ page }) => {
   await mockProfessorFlowApp(page)
@@ -678,6 +719,8 @@ test('student attendance page shows one bundle card with one check-in action', a
   await expect(page.locator('.attendance-semester-table')).toBeVisible()
   await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
   await expect(page.getByText('1차시 1교시 · 2차시 2교시')).toBeVisible()
+  await expect(page.getByText('1개 차시 출석 가능 / 1개 확인 필요')).toBeVisible()
+  await expect(page.getByText('2차시 2교시: 등록 단말이 현재 강의실 네트워크에서 관측되지 않았습니다.')).toBeVisible()
   await expect(page.getByRole('button', { name: '출석하기' })).toBeVisible()
 
   await page.getByRole('button', { name: '출석하기' }).click()
