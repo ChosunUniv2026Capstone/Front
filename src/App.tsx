@@ -19,7 +19,9 @@ import {
   type StudentExamDetail,
   type StudentExamQuestion,
   type StudentExamSummary,
+  type StudentAttendanceEligibilitySummary,
   type StudentAttendanceSemesterMatrix,
+  type StudentAttendanceSession,
   type AdminPresenceOverlayRequest,
   type AdminPresenceSnapshot,
   type AdminPresenceStation,
@@ -1219,6 +1221,10 @@ function App() {
 
   function handleAttendanceRowClick(slot: AttendanceSlot) {
     setAttendanceHistory(null)
+    if (isRestartableAttendanceSlot(slot)) {
+      openAttendanceModal(slot)
+      return
+    }
     if (slot.session_id) {
       navigate(safeAttendanceRoute(slot.course_code, 'roster', { sessionId: slot.session_id }))
       return
@@ -1236,6 +1242,13 @@ function App() {
         .filter((item) => item.session_date === slot.session_date)
         .map((item) => item.projection_key) ?? []
     setSelectedBatchProjectionKeys(sameDateSlots.includes(slot.projection_key) ? [slot.projection_key] : [])
+  }
+
+  function isRestartableAttendanceSlot(slot: AttendanceSlot) {
+    return Boolean(
+      slot.session_id &&
+      (slot.session_status === 'closed' || slot.session_status === 'expired' || slot.session_status === 'canceled'),
+    )
   }
 
   function updateRosterDraft(studentIdValue: string, nextValue: Partial<{ status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string }>) {
@@ -2644,6 +2657,13 @@ function App() {
       return (
         <section className="content-grid">
           <div className="main-column">
+            <SectionCard title="관리 기능 범위" action={<span className="info-chip">조회/데모 MVP</span>}>
+              <p className="empty-state">
+                현재 관리자 화면은 사용자·강의실·AP 현황 조회와 재실 시연 제어에 집중합니다. 사용자, 강의, 강의실,
+                AP 데이터의 생성·수정·삭제는 운영 API/DB 절차로 처리합니다.
+              </p>
+            </SectionCard>
+
             <div className="menu-row">
               <button type="button" className={adminTab === 'users' ? 'menu-button active' : 'menu-button'} onClick={() => setAdminTab('users')}>
                 사용자 현황
@@ -3421,8 +3441,57 @@ function App() {
 
     function getStudentBundleSlotLabels(session: (typeof studentAttendanceSessions)[number]) {
       if (session.slot_labels?.length) return session.slot_labels
+      if (session.included_slots?.length) {
+        return session.included_slots.map((slot) => slot.period_label ?? slot.display_label ?? formatProjectionKeySlotLabel(slot.projection_key))
+      }
       if (session.projection_keys?.length) return session.projection_keys.map(formatProjectionKeySlotLabel)
       return [session.display_label]
+    }
+
+    function isStudentEligibilitySummary(
+      eligibility: StudentAttendanceSession['eligibility'],
+    ): eligibility is StudentAttendanceEligibilitySummary {
+      return 'eligible_slot_count' in eligibility && Array.isArray(eligibility.per_slot)
+    }
+
+    function getStudentEligibilitySummaryText(session: StudentAttendanceSession) {
+      const { eligibility } = session
+      if (!isStudentEligibilitySummary(eligibility)) {
+        return eligibility.eligible ? '출석 가능' : getEligibilityReasonLabel(eligibility.reason_code)
+      }
+      return `${eligibility.eligible_slot_count}개 차시 출석 가능 / ${eligibility.rejected_slot_count}개 확인 필요`
+    }
+
+    function getStudentEligibilityDeviceText(session: StudentAttendanceSession) {
+      const { eligibility } = session
+      if (!isStudentEligibilitySummary(eligibility)) {
+        return eligibility.matched_device_mac ?? '-'
+      }
+      const devices = Array.from(
+        new Set(
+          eligibility.per_slot
+            .map((item) => item.eligibility.matched_device_mac)
+            .filter((mac): mac is string => Boolean(mac)),
+        ),
+      )
+      return devices.length ? devices.join(' · ') : '-'
+    }
+
+    function getStudentEligibilityDetailRows(session: StudentAttendanceSession) {
+      const { eligibility } = session
+      if (!isStudentEligibilitySummary(eligibility)) {
+        return []
+      }
+      const labelsByProjectionKey = new Map<string, string>()
+      getStudentBundleSlotLabels(session).forEach((label, index) => {
+        const projectionKey = session.projection_keys?.[index] ?? session.included_slots?.[index]?.projection_key
+        if (projectionKey) labelsByProjectionKey.set(projectionKey, label)
+      })
+      return eligibility.per_slot.map((item, index) => ({
+        projectionKey: item.projection_key,
+        label: labelsByProjectionKey.get(item.projection_key) ?? `${index + 1}차시`,
+        text: item.eligibility.eligible ? '출석 가능' : getEligibilityReasonLabel(item.eligibility.reason_code),
+      }))
     }
 
     const reportSummary = attendanceTimeline?.report_summary
@@ -3474,35 +3543,47 @@ function App() {
             >
               {studentAttendanceSessions.length > 0 ? (
                 <div className="attendance-student-session-list">
-                  {studentAttendanceSessions.map((session) => (
-                    <article key={session.session_id} className="attendance-student-session-card">
-                      <div className="attendance-student-session-head">
-                        <strong>{session.display_label || `출석 #${session.session_id}`}</strong>
-                        <span className="status-pill status-pill--ok">남은시간 {formatCountdown(session.expires_at)}</span>
-                      </div>
-                      <div className="helper-list">
-                        <div className="helper-row">
-                          <strong>포함 차시</strong>
-                          <span>{getStudentBundleSlotLabels(session).join(' · ')}</span>
+                  {studentAttendanceSessions.map((session) => {
+                    const detailRows = getStudentEligibilityDetailRows(session)
+                    return (
+                      <article key={session.session_id} className="attendance-student-session-card">
+                        <div className="attendance-student-session-head">
+                          <strong>{session.display_label || `출석 #${session.session_id}`}</strong>
+                          <span className="status-pill status-pill--ok">남은시간 {formatCountdown(session.expires_at)}</span>
                         </div>
-                        <div className="helper-row">
-                          <strong>재실 판정</strong>
-                          <span>{session.eligibility.eligible ? '출석 가능' : session.eligibility.reason_code}</span>
+                        <div className="helper-list">
+                          <div className="helper-row">
+                            <strong>포함 차시</strong>
+                            <span>{getStudentBundleSlotLabels(session).join(' · ')}</span>
+                          </div>
+                          <div className="helper-row">
+                            <strong>재실 판정</strong>
+                            <span>{getStudentEligibilitySummaryText(session)}</span>
+                          </div>
+                          <div className="helper-row">
+                            <strong>관측 단말</strong>
+                            <span>{getStudentEligibilityDeviceText(session)}</span>
+                          </div>
                         </div>
-                        <div className="helper-row">
-                          <strong>관측 단말</strong>
-                          <span>{session.eligibility.matched_device_mac ?? '-'}</span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleStudentCheckIn(session.session_id)}
-                        disabled={!session.can_check_in || studentSubmittingSessionId === session.session_id}
-                      >
-                        {studentSubmittingSessionId === session.session_id ? '처리 중...' : session.can_check_in ? '출석하기' : '출석 불가'}
-                      </button>
-                    </article>
-                  ))}
+                        {detailRows.length ? (
+                          <div className="attendance-eligibility-detail" aria-label="차시별 재실 판정">
+                            {detailRows.map((row) => (
+                              <span key={row.projectionKey}>
+                                {row.label}: {row.text}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => void handleStudentCheckIn(session.session_id)}
+                          disabled={!session.can_check_in || studentSubmittingSessionId === session.session_id}
+                        >
+                          {studentSubmittingSessionId === session.session_id ? '처리 중...' : session.can_check_in ? '출석하기' : '출석 불가'}
+                        </button>
+                      </article>
+                    )
+                  })}
                 </div>
               ) : (
                 <p className="empty-state">현재 실시간으로 열린 스마트 출석이 없습니다.</p>
@@ -3848,6 +3929,7 @@ function App() {
                       <div className="attendance-slot-list">
                         {week.slots.map((slot) => {
                           const badge = getSlotBadge(slot)
+                          const canRestart = isRestartableAttendanceSlot(slot)
                           const isSelected = routeSessionId != null
                             ? slot.session_id != null && slot.session_id === routeSessionId
                             : selectedAttendanceSlot?.projection_key === slot.projection_key
@@ -3868,6 +3950,7 @@ function App() {
                                   <span>{slot.professor_name}({slot.professor_login_id})</span>
                                   <span>{slot.classroom_code}</span>
                                   {slot.expires_at ? <span className="caption-text">남은시간 {formatCountdown(slot.expires_at)}</span> : null}
+                                  {canRestart ? <span className="caption-text">종료된 세션 · 다시 시작 가능</span> : null}
                                 </div>
                                 <div className="caption-text">{slot.display_label}</div>
                                 <div className="attendance-slot-metrics">
@@ -3877,6 +3960,15 @@ function App() {
                                   <span className="attendance-metric attendance-metric--official">★ {slot.aggregate.official}</span>
                                 </div>
                               </button>
+                              {canRestart ? (
+                                <button
+                                  type="button"
+                                  className="secondary-button attendance-slot-restart"
+                                  onClick={() => openAttendanceModal(slot)}
+                                >
+                                  출석 다시 시작
+                                </button>
+                              ) : null}
                             </article>
                           )
                         })}
