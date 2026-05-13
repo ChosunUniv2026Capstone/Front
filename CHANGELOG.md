@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.4.0...smart-class-front-v0.4.1) (2026-05-14)
+
+
+### Chores
+
+* refresh package version after live full-feature E2E validation
+
 ## [0.4.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.3.0...smart-class-front-v0.4.0) (2026-05-10)
 
 
