@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test'
 
+const apiEnvelope = <T,>(data: T) => {
+  if (data && typeof data === 'object' && 'success' in data) {
+    return data
+  }
+  return { success: true, data, message: 'ok', meta: {} }
+}
+
 const studentSession = {
   success: true,
   data: {
@@ -86,30 +93,30 @@ async function mockStudentAssignmentApp(page: Parameters<typeof test>[0]['page']
     await route.fulfill({ json: { status: 'ok' } })
   })
   await page.route('**/api/auth/bootstrap', async (route) => {
-    await route.fulfill({ json: studentSession })
+    await route.fulfill({ json: apiEnvelope(studentSession) })
   })
   await page.route('**/api/auth/me', async (route) => {
-    await route.fulfill({ json: studentSession })
+    await route.fulfill({ json: apiEnvelope(studentSession) })
   })
   await page.route('**/api/students/20201234/courses', async (route) => {
-    await route.fulfill({ json: studentCourses })
+    await route.fulfill({ json: apiEnvelope(studentCourses) })
   })
   await page.route('**/api/notices/20201234', async (route) => {
-    await route.fulfill({ json: [] })
+    await route.fulfill({ json: apiEnvelope([]) })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments', async (route) => {
-    await route.fulfill({ json: [upcomingAssignment, openAssignment] })
+    await route.fulfill({ json: apiEnvelope([upcomingAssignment, openAssignment]) })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments/101', async (route) => {
-    await route.fulfill({ json: { ...upcomingAssignment, submission: null } })
+    await route.fulfill({ json: apiEnvelope({ ...upcomingAssignment, submission: null }) })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments/102', async (route) => {
-    await route.fulfill({ json: { ...openAssignment, submission: null } })
+    await route.fulfill({ json: apiEnvelope({ ...openAssignment, submission: null }) })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments/102/submission', async (route) => {
     submissionMultipartBody = route.request().postData() ?? ''
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         ...openAssignment,
         submitted: true,
         submitted_at: '2026-03-03T15:30:00Z',
@@ -129,7 +136,7 @@ async function mockStudentAssignmentApp(page: Parameters<typeof test>[0]['page']
             },
           ],
         },
-      },
+      }),
     })
   })
 

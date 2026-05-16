@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test'
 
+const apiEnvelope = <T,>(data: T) => {
+  if (data && typeof data === 'object' && 'success' in data) {
+    return data
+  }
+  return { success: true, data, message: 'ok', meta: {} }
+}
+
 const adminSnapshot = (overlayActive: boolean) => ({
   cacheHit: false,
   overlayActive,
@@ -61,7 +68,7 @@ test('admin overlay controls and student eligibility change are visible', async 
     const body = route.request().postDataJSON() as { login_id: string }
     const isAdmin = body.login_id === 'ADM001'
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         access_token: `dev-token:${body.login_id}`,
         user: {
           id: isAdmin ? 900 : 901,
@@ -69,81 +76,81 @@ test('admin overlay controls and student eligibility change are visible', async 
           login_id: body.login_id,
           name: isAdmin ? 'Choi Admin 01' : 'Kim Student 06',
         },
-      },
+      }),
     })
   })
 
   await page.route('**/api/admin/users', async (route) => {
     await route.fulfill({
-      json: [
+      json: apiEnvelope([
         { id: 1, role: 'student', login_id: '20201239', name: 'Kim Student 06' },
         { id: 2, role: 'professor', login_id: 'PRF002', name: 'Lee Professor 02' },
         { id: 3, role: 'admin', login_id: 'ADM001', name: 'Choi Admin 01' },
-      ],
+      ]),
     })
   })
 
   await page.route('**/api/admin/classrooms', async (route) => {
     await route.fulfill({
-      json: [
+      json: apiEnvelope([
         { id: 1, classroom_code: 'B101', name: 'Capstone Lab', building: 'Main', floor_label: '1F' },
-      ],
+      ]),
     })
   })
 
   await page.route('**/api/admin/classroom-networks', async (route) => {
     await route.fulfill({
-      json: [
+      json: apiEnvelope([
         { id: 1, classroom_code: 'B101', ap_id: 'phy3-ap0', ssid: 'CU-B101-2G-2', gateway_host: 'gw', collection_mode: 'dummy' },
-      ],
+      ]),
     })
   })
   await page.route('**/api/admin/classroom-networks/1', async (route) => {
     await route.fulfill({
-      json: { id: 1, classroom_code: 'B101', ap_id: 'phy3-ap0', ssid: 'CU-B101-2G-2', gateway_host: 'gw', signal_threshold_dbm: -65, collection_mode: 'dummy' },
+      json: apiEnvelope({ id: 1, classroom_code: 'B101', ap_id: 'phy3-ap0', ssid: 'CU-B101-2G-2', gateway_host: 'gw', signal_threshold_dbm: -65, collection_mode: 'dummy' }),
     })
   })
 
   await page.route('**/api/admin/presence/classrooms/B101/snapshot**', async (route) => {
-    await route.fulfill({ json: adminSnapshot(overlayApplied) })
+    await route.fulfill({ json: apiEnvelope(adminSnapshot(overlayApplied)) })
   })
 
   await page.route('**/api/admin/presence/classrooms/B101/dummy-controls', async (route) => {
     overlayApplied = true
-    await route.fulfill({ json: adminSnapshot(true) })
+    await route.fulfill({ json: apiEnvelope(adminSnapshot(true)) })
   })
 
   await page.route('**/api/admin/presence/classrooms/B101/dummy-controls/reset', async (route) => {
     overlayApplied = false
-    await route.fulfill({ json: adminSnapshot(false) })
+    await route.fulfill({ json: apiEnvelope(adminSnapshot(false)) })
   })
 
   await page.route('**/api/students/20201239/courses', async (route) => {
     await route.fulfill({
-      json: [
+      json: apiEnvelope([
         { id: 1, course_code: 'CSE116', title: 'Capstone Design A', professor_name: 'Lee Professor 02', classroom_code: 'B101' },
-      ],
+      ]),
     })
   })
   await page.route('**/api/notices/20201239', async (route) => {
-    await route.fulfill({ json: [] })
+    await route.fulfill({ json: apiEnvelope([]) })
   })
   await page.route('**/api/students/20201239/devices', async (route) => {
-    await route.fulfill({ json: [{ id: 1, label: 'Choi Phone', mac_address: '52:54:00:12:34:56', status: 'active' }] })
+    await route.fulfill({ json: apiEnvelope([{ id: 1, label: 'Choi Phone', mac_address: '52:54:00:12:34:56', status: 'active' }]) })
   })
   await page.route('**/api/students/20201239/courses/CSE116/attendance/active-sessions', async (route) => {
     await route.fulfill({
-      json: { course_code: 'CSE116', student_id: '20201239', sessions: [] },
+      json: apiEnvelope({ course_code: 'CSE116', student_id: '20201239', sessions: [] }),
     })
   })
   await page.route('**/api/students/20201239/courses/CSE116/attendance/semester-matrix', async (route) => {
     await route.fulfill({
-      json: { course_code: 'CSE116', course_title: 'Capstone Design A', student_id: '20201239', student_name: 'Kim Student 06', weeks: [] },
+      json: apiEnvelope({ course_code: 'CSE116', course_title: 'Capstone Design A', student_id: '20201239', student_name: 'Kim Student 06', weeks: [] }),
     })
   })
   await page.route('**/api/attendance/eligibility', async (route) => {
     await route.fulfill({
-      json: overlayApplied
+      json: apiEnvelope(overlayApplied
         ? {
             eligible: true,
             reason_code: 'OK',
@@ -159,7 +166,7 @@ test('admin overlay controls and student eligibility change are visible', async 
             observed_at: '2026-04-07T15:05:00+09:00',
             snapshot_age_seconds: 2,
             evidence: { classroomId: 'B101', matchedApIds: ['phy3-ap0'] },
-          },
+          }),
     })
   })
 

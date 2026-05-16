@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test'
 
+const apiEnvelope = <T,>(data: T) => {
+  if (data && typeof data === 'object' && 'success' in data) {
+    return data
+  }
+  return { success: true, data, message: 'ok', meta: {} }
+}
+
 const studentSession = {
   success: true,
   data: {
@@ -155,48 +162,48 @@ async function mockStudentExamApp(
   })
 
   await page.route('**/api/auth/bootstrap', async (route) => {
-    await route.fulfill({ json: studentSession })
+    await route.fulfill({ json: apiEnvelope(studentSession) })
   })
 
   await page.route('**/api/auth/me', async (route) => {
-    await route.fulfill({ json: studentSession })
+    await route.fulfill({ json: apiEnvelope(studentSession) })
   })
 
   await page.route('**/api/students/20201234/courses', async (route) => {
-    await route.fulfill({ json: studentCourses })
+    await route.fulfill({ json: apiEnvelope(studentCourses) })
   })
 
   await page.route('**/api/notices/20201234', async (route) => {
-    await route.fulfill({ json: [] })
+    await route.fulfill({ json: apiEnvelope([]) })
   })
 
   await page.route('**/api/students/20201234/courses/CSE116/exams', async (route) => {
-    await route.fulfill({ json: [buildExamSummary()] })
+    await route.fulfill({ json: apiEnvelope([buildExamSummary()]) })
   })
 
   await page.route('**/api/students/20201234/courses/CSE116/exams/101', async (route) => {
-    await route.fulfill({ json: buildExamDetail() })
+    await route.fulfill({ json: apiEnvelope(buildExamDetail()) })
   })
 
   await page.route('**/api/students/20201234/courses/CSE116/exams/101/start', async (route) => {
     if (options?.startErrorEnvelope) {
       await route.fulfill({
         status: options.startErrorEnvelope.status,
-        json: options.startErrorEnvelope.body,
+        json: apiEnvelope(options.startErrorEnvelope.body),
       })
       return
     }
 
     started = true
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         submission_id: 5001,
         attempt_no: 1,
         status: 'in_progress',
         started_at: '2099-03-03T15:00:00Z',
         expires_at: '2099-03-03T16:00:00Z',
         idempotent: false,
-      },
+      }),
     })
   })
 
@@ -205,13 +212,13 @@ async function mockStudentExamApp(
     const body = route.request().postDataJSON() as { selected_option_id: number | null }
     selectedOptionIds.set(questionId, body.selected_option_id)
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         submission_id: 5001,
         question_id: questionId,
         selected_option_id: body.selected_option_id,
         answer_text: null,
         answered_at: '2099-03-03T15:05:00Z',
-      },
+      }),
     })
   })
 
@@ -219,13 +226,13 @@ async function mockStudentExamApp(
     submitRequestUrl = route.request().url()
     submitted = true
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         exam_id: 101,
         attempt: buildExamSummary().attempt,
         score: 10,
         total_count: examQuestions.length,
         answered_count: examQuestions.length,
-      },
+      }),
     })
   })
 

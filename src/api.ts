@@ -692,6 +692,10 @@ function shouldTrySessionRefresh(path: string) {
   return !['/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/bootstrap', '/api/auth/me'].includes(path)
 }
 
+function requiresApiEnvelope(path: string) {
+  return path.startsWith('/api/')
+}
+
 async function requestInternal<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(init?.headers ?? {})
   if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -757,6 +761,12 @@ async function requestInternal<T>(path: string, init?: RequestInit, options: Req
     'data' in successEnvelope
   ) {
     return successEnvelope.data
+  }
+
+  if (requiresApiEnvelope(path)) {
+    throw new ApiRequestError('Invalid API response envelope', response.status, 'INVALID_API_RESPONSE_ENVELOPE', {
+      path,
+    })
   }
 
   return payload as T
