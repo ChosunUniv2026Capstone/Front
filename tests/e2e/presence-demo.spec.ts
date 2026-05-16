@@ -104,7 +104,7 @@ test('admin overlay controls and student eligibility change are visible', async 
     })
   })
 
-  await page.route('**/api/admin/presence/classrooms/B101/snapshot', async (route) => {
+  await page.route('**/api/admin/presence/classrooms/B101/snapshot**', async (route) => {
     await route.fulfill({ json: adminSnapshot(overlayApplied) })
   })
 
@@ -174,7 +174,9 @@ test('admin overlay controls and student eligibility change are visible', async 
   await expect(page.getByRole('combobox').nth(1)).toContainText('20201239 / Kim Student 06 / Choi Phone / 52:54:00:12:34:56')
   await page.getByRole('button', { name: '재실 상태 적용' }).click()
   await page.getByRole('button', { name: '강의실 및 네트워크 현황' }).click()
+  await page.getByRole('button', { name: /B101/ }).click()
   await expect(page.getByText('phy3-ap0').first()).toBeVisible()
+  await expect(page.getByText('10초 자동 켜기')).toBeVisible()
 
   await page.getByRole('button', { name: '로그아웃' }).click()
   await page.getByLabel('아이디').fill('20201239')
