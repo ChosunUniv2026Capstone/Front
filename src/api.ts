@@ -1045,8 +1045,10 @@ export const api = {
   listUsers: () => request<UserSummary[]>('/api/admin/users'),
   listClassrooms: () => request<Classroom[]>('/api/admin/classrooms'),
   listClassroomNetworks: () => request<ClassroomNetwork[]>('/api/admin/classroom-networks'),
-  getAdminPresenceSnapshot: (classroomCode: string) =>
-    request<AdminPresenceSnapshot>(`/api/admin/presence/classrooms/${classroomCode}/snapshot`),
+  getAdminPresenceSnapshot: (classroomCode: string, options?: { refresh?: boolean }) =>
+    request<AdminPresenceSnapshot>(
+      `/api/admin/presence/classrooms/${classroomCode}/snapshot${options?.refresh ? '?refresh=true' : ''}`,
+    ),
   applyAdminPresenceOverlay: (classroomCode: string, payload: AdminPresenceOverlayRequest) =>
     request<AdminPresenceSnapshot>(`/api/admin/presence/classrooms/${classroomCode}/dummy-controls`, {
       method: 'POST',

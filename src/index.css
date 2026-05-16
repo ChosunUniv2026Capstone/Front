@@ -905,11 +905,53 @@ pre {
   padding: 14px;
 }
 
+.admin-card--selected {
+  border-color: rgba(37, 99, 235, 0.42);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
 .admin-card-head {
   display: flex;
   justify-content: space-between;
   gap: 10px;
   align-items: flex-start;
+}
+
+.admin-card-selector {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.admin-card-selector:hover {
+  box-shadow: none;
+}
+
+.admin-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-ap-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.secondary-button {
+  background: var(--surface-soft);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.secondary-button.is-active {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--primary);
+  border-color: rgba(37, 99, 235, 0.28);
 }
 
 .banner {

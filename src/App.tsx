@@ -564,6 +564,9 @@ function App() {
   const [adminClassrooms, setAdminClassrooms] = useState<Classroom[]>([])
   const [adminNetworks, setAdminNetworks] = useState<ClassroomNetwork[]>([])
   const [adminPresenceSnapshots, setAdminPresenceSnapshots] = useState<Record<string, AdminPresenceSnapshot>>({})
+  const [adminPresenceLoading, setAdminPresenceLoading] = useState<Record<string, boolean>>({})
+  const [adminPresenceAutoRefresh, setAdminPresenceAutoRefresh] = useState<Record<string, boolean>>({})
+  const [selectedAdminClassroomCode, setSelectedAdminClassroomCode] = useState<string | null>(null)
   const [attendanceTimeline, setAttendanceTimeline] = useState<AttendanceTimeline | null>(null)
   const [attendanceRoster, setAttendanceRoster] = useState<AttendanceSessionRoster | null>(null)
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceHistory | null>(null)
@@ -734,44 +737,19 @@ function App() {
       api.listClassrooms(),
       api.listClassroomNetworks(),
     ])
-    const presenceEntries = await Promise.all(
-      classrooms.map(async (classroom) => {
-        try {
-          const snapshot = await api.getAdminPresenceSnapshot(classroom.classroom_code)
-          return [classroom.classroom_code, snapshot] as const
-        } catch {
-          return null
-        }
-      }),
-    )
     setAdminUsers(users)
     setAdminClassrooms(classrooms)
     setAdminNetworks(networks)
-    const nextSnapshots = Object.fromEntries(
-      presenceEntries.filter((entry): entry is readonly [string, AdminPresenceSnapshot] => Boolean(entry)),
-    )
-    setAdminPresenceSnapshots(nextSnapshots)
-    const initialSnapshot = nextSnapshots[presenceControlClassroom]
-    const initialDevice =
-      initialSnapshot?.deviceOptions.find((option) => option.macAddress === DEMO_DEVICE_MAC) ??
-      initialSnapshot?.deviceOptions[0]
-    if (initialDevice) {
-      setPresenceControlDeviceMac(initialDevice.macAddress)
-    }
-    const initialAp = initialSnapshot?.aps[0]
-    if (initialAp) {
-      setPresenceControlApId(initialAp.apId)
-      const matchingNetwork = nextSnapshots[presenceControlClassroom]?.classroomNetworks.find(
-        (network) => network.ap_id === initialAp.apId,
-      )
-      setPresenceThresholdDbm(matchingNetwork?.signal_threshold_dbm ?? -65)
-      const initialStation = initialAp.stations.find((station) => station.macAddress === (initialDevice?.macAddress ?? DEMO_DEVICE_MAC))
-      if (initialStation) {
-        setPresenceControlAssociated(Boolean(initialStation.associated))
-        setPresenceControlSignalDbm(initialStation.signalDbm ?? -47)
-      }
-    }
-  }, [presenceControlClassroom])
+    setAdminPresenceSnapshots({})
+    setAdminPresenceLoading({})
+    setAdminPresenceAutoRefresh({})
+    setSelectedAdminClassroomCode(null)
+    setPresenceControlClassroom((current) => (
+      classrooms.some((classroom) => classroom.classroom_code === current)
+        ? current
+        : classrooms[0]?.classroom_code ?? current
+    ))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -815,21 +793,68 @@ function App() {
     }
   }, [hydrateAdmin, hydrateProfessor, hydrateStudent, navigate, navigateToDefault])
 
-  async function refreshAdminPresenceSnapshot(classroomCode: string) {
-    const snapshot = await api.getAdminPresenceSnapshot(classroomCode)
-    setAdminPresenceSnapshots((current) => ({
+  const refreshAdminPresenceSnapshot = useCallback(async (
+    classroomCode: string,
+    options?: { refresh?: boolean; syncControls?: boolean },
+  ) => {
+    setAdminPresenceLoading((current) => ({
       ...current,
-      [classroomCode]: snapshot,
+      [classroomCode]: true,
     }))
-    const matchingDevice =
-      snapshot.deviceOptions.find((option) => option.macAddress === presenceControlDeviceMac) ?? snapshot.deviceOptions[0]
-    if (matchingDevice) {
-      setPresenceControlDeviceMac(matchingDevice.macAddress)
+    try {
+      const snapshot = await api.getAdminPresenceSnapshot(classroomCode, { refresh: options?.refresh })
+      setAdminPresenceSnapshots((current) => ({
+        ...current,
+        [classroomCode]: snapshot,
+      }))
+      if (options?.syncControls ?? classroomCode === presenceControlClassroom) {
+        const matchingDevice =
+          snapshot.deviceOptions.find((option) => option.macAddress === presenceControlDeviceMac) ?? snapshot.deviceOptions[0]
+        if (matchingDevice) {
+          setPresenceControlDeviceMac(matchingDevice.macAddress)
+        }
+        const matchingNetwork = snapshot.classroomNetworks.find((network) => network.ap_id === presenceControlApId)
+        setPresenceThresholdDbm(matchingNetwork?.signal_threshold_dbm ?? -65)
+      }
+      return snapshot
+    } finally {
+      setAdminPresenceLoading((current) => ({
+        ...current,
+        [classroomCode]: false,
+      }))
     }
-    const matchingNetwork = snapshot.classroomNetworks.find((network) => network.ap_id === presenceControlApId)
-    setPresenceThresholdDbm(matchingNetwork?.signal_threshold_dbm ?? -65)
-    return snapshot
-  }
+  }, [presenceControlApId, presenceControlClassroom, presenceControlDeviceMac])
+
+  useEffect(() => {
+    if (!isAdmin || adminTab !== 'demo' || !presenceControlClassroom) return
+    if (adminPresenceSnapshots[presenceControlClassroom] || adminPresenceLoading[presenceControlClassroom]) return
+    void refreshAdminPresenceSnapshot(presenceControlClassroom, { syncControls: true })
+  }, [
+    adminPresenceLoading,
+    adminPresenceSnapshots,
+    adminTab,
+    isAdmin,
+    presenceControlClassroom,
+    refreshAdminPresenceSnapshot,
+  ])
+
+  useEffect(() => {
+    const enabledClassrooms = Object.entries(adminPresenceAutoRefresh)
+      .filter(([, enabled]) => enabled)
+      .map(([classroomCode]) => classroomCode)
+    if (!isAdmin || enabledClassrooms.length === 0) return
+
+    const interval = window.setInterval(() => {
+      enabledClassrooms.forEach((classroomCode) => {
+        void refreshAdminPresenceSnapshot(classroomCode, {
+          refresh: true,
+          syncControls: classroomCode === presenceControlClassroom,
+        })
+      })
+    }, 10_000)
+
+    return () => window.clearInterval(interval)
+  }, [adminPresenceAutoRefresh, isAdmin, presenceControlClassroom, refreshAdminPresenceSnapshot])
 
   async function handleApplyPresenceControl(event: FormEvent) {
     event.preventDefault()
@@ -876,6 +901,30 @@ function App() {
     }
   }
 
+  function handleSelectAdminClassroom(classroomCode: string) {
+    setSelectedAdminClassroomCode((current) => (current === classroomCode ? null : classroomCode))
+    if (!adminPresenceSnapshots[classroomCode] && !adminPresenceLoading[classroomCode]) {
+      void refreshAdminPresenceSnapshot(classroomCode)
+    }
+  }
+
+  function handleRefreshAdminClassroom(classroomCode: string) {
+    setSelectedAdminClassroomCode(classroomCode)
+    void refreshAdminPresenceSnapshot(classroomCode, { refresh: true })
+  }
+
+  function handleToggleAdminAutoRefresh(classroomCode: string) {
+    const nextEnabled = !adminPresenceAutoRefresh[classroomCode]
+    setAdminPresenceAutoRefresh((current) => ({
+      ...current,
+      [classroomCode]: nextEnabled,
+    }))
+    setSelectedAdminClassroomCode(classroomCode)
+    if (nextEnabled) {
+      void refreshAdminPresenceSnapshot(classroomCode, { refresh: true })
+    }
+  }
+
   function resetRoleData() {
     setDevices([])
     setEligibility(null)
@@ -885,6 +934,9 @@ function App() {
     setAdminClassrooms([])
     setAdminNetworks([])
     setAdminPresenceSnapshots({})
+    setAdminPresenceLoading({})
+    setAdminPresenceAutoRefresh({})
+    setSelectedAdminClassroomCode(null)
     setLearningItems([])
     setSelectedLearningItem(null)
     setSelectedCourse(null)
@@ -2615,28 +2667,58 @@ function App() {
 
   function renderAdminPresenceCard(classroom: Classroom) {
     const snapshot = adminPresenceSnapshots[classroom.classroom_code]
+    const isSelected = selectedAdminClassroomCode === classroom.classroom_code
+    const isLoading = Boolean(adminPresenceLoading[classroom.classroom_code])
+    const autoRefreshEnabled = Boolean(adminPresenceAutoRefresh[classroom.classroom_code])
     const classroomNetworks = adminNetworks.filter(
       (network) => network.classroom_code === classroom.classroom_code,
     )
+    const stationCount = snapshot?.aps.reduce((total, ap) => total + ap.stations.length, 0) ?? 0
 
     return (
-      <article key={classroom.id} className="admin-card">
+      <article key={classroom.id} className={`admin-card${isSelected ? ' admin-card--selected' : ''}`}>
         <div className="admin-card-head">
-          <div>
-            <p className="entity-title">{classroom.classroom_code}</p>
-            <p className="entity-subtitle">
+          <button
+            type="button"
+            className="admin-card-selector"
+            onClick={() => handleSelectAdminClassroom(classroom.classroom_code)}
+            aria-expanded={isSelected}
+          >
+            <span className="entity-title">{classroom.classroom_code}</span>
+            <span className="entity-subtitle">
               {classroom.name} · {classroom.building ?? '-'} / {classroom.floor_label ?? '-'}
-            </p>
-          </div>
+            </span>
+          </button>
           <span className="info-chip">
-            {snapshot ? `${snapshot.overlayActive ? 'Overlay' : '기본값'} · AP ${snapshot.aps.length}` : `AP ${classroomNetworks.length}`}
+            {snapshot ? `${snapshot.collectionMode ?? 'snapshot'} · AP ${snapshot.aps.length} · 단말 ${stationCount}` : `AP ${classroomNetworks.length}`}
           </span>
         </div>
-        {snapshot ? (
+        <div className="admin-card-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => handleRefreshAdminClassroom(classroom.classroom_code)}
+            disabled={isLoading}
+          >
+            {isLoading ? '새로고침 중...' : '강의실 새로고침'}
+          </button>
+          <button
+            type="button"
+            className={autoRefreshEnabled ? 'secondary-button is-active' : 'secondary-button'}
+            onClick={() => handleToggleAdminAutoRefresh(classroom.classroom_code)}
+          >
+            10초 자동 {autoRefreshEnabled ? '끄기' : '켜기'}
+          </button>
+        </div>
+        {!isSelected ? (
+          <p className="empty-state">강의실을 클릭하면 Redis snapshot 기반 AP/단말 목록을 불러옵니다.</p>
+        ) : isLoading && !snapshot ? (
+          <p className="empty-state">현재 연결 단말을 불러오는 중입니다.</p>
+        ) : snapshot ? (
           <div className="helper-list">
             <div className="helper-row">
               <strong>수집 방식</strong>
-              <span>{snapshot.collectionMode ?? '-'}</span>
+              <span>{snapshot.collectionMode ?? '-'}{snapshot.cacheHit ? ' · Redis cache' : ' · refresh'}</span>
             </div>
             <div className="helper-row">
               <strong>관측 시각</strong>
@@ -2649,10 +2731,10 @@ function App() {
               </span>
             </div>
             {snapshot.aps.map((ap) => (
-              <div key={ap.apId}>
+              <div key={ap.apId} className="admin-ap-panel">
                 <div className="helper-row">
                   <strong>{ap.apId}</strong>
-                  <span>{ap.ssid}</span>
+                  <span>{ap.ssid} · 단말 {ap.stations.length}대</span>
                 </div>
                 <div className="entity-list">
                   {ap.stations.length ? (
