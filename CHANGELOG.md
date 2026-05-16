@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.4.1...smart-class-front-v0.5.0) (2026-05-16)
+
+
+### Features
+
+* **frontend:** enable selected LMS demo flows ([6d502b1](https://github.com/ChosunUniv2026Capstone/Front/commit/6d502b1773da2d2ebe6790073bc54b275589cd62))
+* **frontend:** lazy load admin presence devices ([32ff8c6](https://github.com/ChosunUniv2026Capstone/Front/commit/32ff8c602a89493cf3ca603a06331d3e218f48f1))
+* **frontend:** monitor demo APs alongside live APs ([aa77dfd](https://github.com/ChosunUniv2026Capstone/Front/commit/aa77dfd565ba65aa68c6fa8371028a02e61c4bf2))
+* **frontend:** require API envelopes for client calls ([b308f7e](https://github.com/ChosunUniv2026Capstone/Front/commit/b308f7ed9bdcf62a16b3adb039c3639d70fb7646))
+* **frontend:** show AP offline smart attendance state ([6a45643](https://github.com/ChosunUniv2026Capstone/Front/commit/6a456431908cffc784f78ec59c775ac0d5535553))
+
 ## [0.4.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.4.0...smart-class-front-v0.4.1) (2026-05-14)
 
 
