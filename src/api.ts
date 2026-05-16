@@ -96,6 +96,11 @@ export type ReportExport = StoredObjectAttachment & {
 
 export type StudentAssignmentSubmission = {
   id: number
+  score?: number | null
+  max_score?: number | null
+  feedback?: string | null
+  graded_at?: string | null
+  grading_status?: AssignmentGradingStatus | string | null
   submission_text?: string | null
   submitted_at?: string | null
   updated_at?: string | null
@@ -104,6 +109,10 @@ export type StudentAssignmentSubmission = {
 
 export type StudentAssignmentSummary = {
   id: number
+  max_score?: number | null
+  score?: number | null
+  feedback?: string | null
+  grading_status?: AssignmentGradingStatus | string | null
   title: string
   description?: string | null
   opens_at: string
@@ -121,6 +130,11 @@ export type StudentAssignmentDetail = StudentAssignmentSummary & {
 
 export type ProfessorAssignmentSubmission = {
   id: number
+  score?: number | null
+  max_score?: number | null
+  feedback?: string | null
+  graded_at?: string | null
+  grading_status?: AssignmentGradingStatus | string | null
   student_id: string
   student_name: string
   submission_text?: string | null
@@ -131,6 +145,7 @@ export type ProfessorAssignmentSubmission = {
 
 export type ProfessorAssignmentSummary = {
   id: number
+  max_score?: number | null
   title: string
   description?: string | null
   opens_at: string
@@ -150,6 +165,100 @@ export type ProfessorAssignmentCreatePayload = {
   description?: string | null
   opens_at: string
   due_at: string
+}
+
+
+export type AssignmentGradingStatus = 'submitted' | 'graded' | 'returned'
+
+export type AssignmentGradePayload = {
+  score: number | null
+  feedback: string | null
+  grading_status: AssignmentGradingStatus
+}
+
+export type GradeBookItem = {
+  item_type: 'assignment' | 'exam' | string
+  item_id: number | string
+  title: string
+  score?: number | null
+  max_score?: number | null
+  percent?: number | null
+  feedback?: string | null
+  grading_status?: AssignmentGradingStatus | string | null
+  graded_at?: string | null
+  submitted_at?: string | null
+  due_at?: string | null
+}
+
+export type StudentCourseGrades = {
+  course_code: string
+  student_id?: string | null
+  student_name?: string | null
+  overall_percent?: number | null
+  items: GradeBookItem[]
+}
+
+export type ProfessorCourseGradeSummary = {
+  student_id: string
+  student_name: string
+  overall_percent?: number | null
+  items: GradeBookItem[]
+}
+
+export type CourseQnaPost = {
+  id: number
+  author_id?: number | null
+  author_login_id?: string | null
+  author_name?: string | null
+  body: string
+  post_type: 'question' | 'answer' | 'comment' | string
+  created_at?: string | null
+}
+
+export type CourseQnaThread = {
+  id: number
+  title: string
+  body: string
+  status: 'open' | 'answered' | 'closed' | string
+  student_id?: string | null
+  student_name?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  posts?: CourseQnaPost[]
+}
+
+export type StudentQnaCreatePayload = {
+  title: string
+  body: string
+}
+
+export type ProfessorQnaAnswerPayload = {
+  body: string
+  close: boolean
+}
+
+export type LearningProgressStatus = 'not_started' | 'in_progress' | 'completed'
+
+export type LearningProgressUpdatePayload = {
+  progress_percent: number
+  status: LearningProgressStatus
+}
+
+export type StudentLearningProgressItem = {
+  learning_item_id: number
+  title: string
+  kind?: LearningItemKind | string | null
+  week_label?: string | null
+  progress_percent: number
+  status: LearningProgressStatus | string
+  last_viewed_at?: string | null
+  completed_at?: string | null
+  updated_at?: string | null
+}
+
+export type ProfessorLearningProgressRow = StudentLearningProgressItem & {
+  student_id: string
+  student_name: string
 }
 
 export type ExamSummary = {
@@ -897,6 +1006,55 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  gradeProfessorAssignmentSubmission: (
+    professorId: string,
+    courseCode: string,
+    assignmentId: number,
+    submissionId: number,
+    payload: AssignmentGradePayload,
+  ) =>
+    request<ProfessorAssignmentDetail | ProfessorAssignmentSubmission>(
+      `/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/assignments/${pathSegment(assignmentId)}/submissions/${pathSegment(submissionId)}/grade`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    ),
+  getStudentGrades: (studentId: string, courseCode: string) =>
+    request<StudentCourseGrades>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/grades`),
+  getProfessorGrades: (professorId: string, courseCode: string) =>
+    request<ProfessorCourseGradeSummary[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/grades`),
+  listStudentQna: (studentId: string, courseCode: string) =>
+    request<CourseQnaThread[]>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/qna`),
+  createStudentQna: (studentId: string, courseCode: string, payload: StudentQnaCreatePayload) =>
+    request<CourseQnaThread>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/qna`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listProfessorQna: (professorId: string, courseCode: string) =>
+    request<CourseQnaThread[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/qna`),
+  answerProfessorQna: (professorId: string, courseCode: string, threadId: number, payload: ProfessorQnaAnswerPayload) =>
+    request<CourseQnaThread>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/qna/${pathSegment(threadId)}/answer`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listStudentLearningProgress: (studentId: string, courseCode: string) =>
+    request<StudentLearningProgressItem[]>(`/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/learning-progress`),
+  updateStudentLearningProgress: (
+    studentId: string,
+    courseCode: string,
+    learningItemId: number,
+    payload: LearningProgressUpdatePayload,
+  ) =>
+    request<StudentLearningProgressItem>(
+      `/api/students/${pathSegment(studentId)}/courses/${pathSegment(courseCode)}/learning-items/${pathSegment(learningItemId)}/progress`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    ),
+  listProfessorLearningProgress: (professorId: string, courseCode: string) =>
+    request<ProfessorLearningProgressRow[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/learning-progress`),
   buildProfessorAssignmentAttachmentUrl: (
     professorId: string,
     courseCode: string,

@@ -3,14 +3,19 @@ import type { FormEvent, ReactNode } from 'react'
 import {
   ApiRequestError,
   buildAttendanceWebSocketUrl,
+  type AssignmentGradingStatus,
+  type CourseQnaThread,
+  type GradeBookItem,
   type AttendanceHistory,
   type ExamSummary,
   type ProfessorAssignmentCreatePayload,
   type ProfessorAssignmentDetail,
   type ProfessorAssignmentSummary,
   type ProfessorAttendanceStudentStats,
+  type ProfessorCourseGradeSummary,
   type ProfessorExamCreatePayload,
   type ProfessorExamDetail,
+  type ProfessorLearningProgressRow,
   type AttendanceSlot,
   type AttendanceTimeline,
   type AttendanceSessionRoster,
@@ -23,6 +28,8 @@ import {
   type StudentAttendanceSlotEligibility,
   type StudentAttendanceSemesterMatrix,
   type StudentAttendanceSession,
+  type StudentCourseGrades,
+  type StudentLearningProgressItem,
   type AdminPresenceOverlayRequest,
   type AdminPresenceSnapshot,
   type AdminPresenceStation,
@@ -35,6 +42,7 @@ import {
   type Device,
   type EligibilityResponse,
   type LearningItem,
+  type LearningProgressStatus,
   type LoginUser,
   type Notice,
   type UserSummary,
@@ -101,6 +109,25 @@ const LEARNING_KIND_LABEL: Record<LearningItem['kind'], string> = {
   video: '영상',
 }
 
+
+const GRADING_STATUS_LABEL: Record<AssignmentGradingStatus, string> = {
+  submitted: '제출됨',
+  graded: '채점 완료',
+  returned: '반려/재제출',
+}
+
+const QNA_STATUS_LABEL: Record<string, string> = {
+  open: '대기',
+  answered: '답변 완료',
+  closed: '종료',
+}
+
+const LEARNING_PROGRESS_STATUS_LABEL: Record<LearningProgressStatus, string> = {
+  not_started: '시작 전',
+  in_progress: '진행 중',
+  completed: '완료',
+}
+
 const DEMO_DEVICE_MAC = '52:54:00:12:34:56'
 
 const EXAM_TYPE_LABEL: Record<ExamSummary['exam_type'], string> = {
@@ -130,6 +157,39 @@ function getAssignmentStatusMeta(status: StudentAssignmentSummary['status'] | Pr
     default:
       return { label: status, tone: 'draft' as const }
   }
+}
+
+
+function getGradingStatusLabel(status?: string | null) {
+  return status && status in GRADING_STATUS_LABEL ? GRADING_STATUS_LABEL[status as AssignmentGradingStatus] : '미채점'
+}
+
+function getQnaStatusLabel(status?: string | null) {
+  return status ? QNA_STATUS_LABEL[status] ?? status : '-'
+}
+
+function getLearningProgressStatusLabel(status?: string | null) {
+  return status && status in LEARNING_PROGRESS_STATUS_LABEL
+    ? LEARNING_PROGRESS_STATUS_LABEL[status as LearningProgressStatus]
+    : status ?? '-'
+}
+
+function getLearningProgressStatus(progressPercent: number): LearningProgressStatus {
+  if (progressPercent >= 100) return 'completed'
+  if (progressPercent <= 0) return 'not_started'
+  return 'in_progress'
+}
+
+function formatOptionalScore(value?: number | null, fallback = '-') {
+  return value == null ? fallback : `${Number(value).toFixed(1)}점`
+}
+
+function formatOptionalPercent(value?: number | null, fallback = '-') {
+  return value == null ? fallback : `${Number(value).toFixed(1)}%`
+}
+
+function getGradeItemKey(item: GradeBookItem) {
+  return `${item.item_type}-${item.item_id}`
 }
 
 function getStudentExamStatusMeta(exam: StudentExamSummary) {
@@ -554,6 +614,9 @@ function App() {
   const [learningFormat, setLearningFormat] = useState('PDF')
   const [learningDuration, setLearningDuration] = useState('20분')
   const [learningFiles, setLearningFiles] = useState<File[]>([])
+  const [studentLearningProgress, setStudentLearningProgress] = useState<StudentLearningProgressItem[]>([])
+  const [professorLearningProgress, setProfessorLearningProgress] = useState<ProfessorLearningProgressRow[]>([])
+  const [learningProgressDrafts, setLearningProgressDrafts] = useState<Record<number, string>>({})
   const [noticeFiles, setNoticeFiles] = useState<File[]>([])
 
   const [devices, setDevices] = useState<Device[]>([])
@@ -589,6 +652,18 @@ function App() {
   const [assignmentLoading, setAssignmentLoading] = useState(false)
   const [assignmentBusyKey, setAssignmentBusyKey] = useState<string | null>(null)
   const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null)
+  const [assignmentGradeDrafts, setAssignmentGradeDrafts] = useState<
+    Record<number, { score: string; feedback: string; gradingStatus: AssignmentGradingStatus }>
+  >({})
+  const [studentGrades, setStudentGrades] = useState<StudentCourseGrades | null>(null)
+  const [professorGrades, setProfessorGrades] = useState<ProfessorCourseGradeSummary[]>([])
+  const [qnaThreads, setQnaThreads] = useState<CourseQnaThread[]>([])
+  const [qnaTitle, setQnaTitle] = useState('')
+  const [qnaBody, setQnaBody] = useState('')
+  const [qnaAnswerDrafts, setQnaAnswerDrafts] = useState<Record<number, string>>({})
+  const [qnaAnswerCloseDrafts, setQnaAnswerCloseDrafts] = useState<Record<number, boolean>>({})
+  const [lmsLoading, setLmsLoading] = useState(false)
+  const [lmsMessage, setLmsMessage] = useState<string | null>(null)
   const [studentExams, setStudentExams] = useState<StudentExamSummary[]>([])
   const [studentExamDetail, setStudentExamDetail] = useState<StudentExamDetail | null>(null)
   const [studentExamQuestionIndex, setStudentExamQuestionIndex] = useState(0)
@@ -1026,6 +1101,18 @@ function App() {
     setSelectedProfessorAssignmentSubmissionId(null)
     setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
     setAssignmentMessage(null)
+    setAssignmentGradeDrafts({})
+    setStudentGrades(null)
+    setProfessorGrades([])
+    setQnaThreads([])
+    setQnaTitle('')
+    setQnaBody('')
+    setQnaAnswerDrafts({})
+    setQnaAnswerCloseDrafts({})
+    setStudentLearningProgress([])
+    setProfessorLearningProgress([])
+    setLearningProgressDrafts({})
+    setLmsMessage(null)
     setAttendanceModalOpen(false)
     setAttendanceModalAnchorSlot(null)
     setSelectedBatchProjectionKeys([])
@@ -1976,6 +2063,29 @@ function App() {
     })
   }, [professorAssignmentDetail])
 
+
+  useEffect(() => {
+    if (!professorAssignmentDetail) {
+      setAssignmentGradeDrafts({})
+      return
+    }
+
+    setAssignmentGradeDrafts(
+      Object.fromEntries(
+        professorAssignmentDetail.submissions.map((submission) => [
+          submission.id,
+          {
+            score: submission.score == null ? '' : String(submission.score),
+            feedback: submission.feedback ?? '',
+            gradingStatus: (submission.grading_status === 'graded' || submission.grading_status === 'returned' || submission.grading_status === 'submitted')
+              ? submission.grading_status
+              : 'submitted',
+          },
+        ]),
+      ),
+    )
+  }, [professorAssignmentDetail])
+
   useEffect(() => {
     if (courseSection !== 'exams' || !selectedCourse || !currentUser) return
     let cancelled = false
@@ -2047,6 +2157,12 @@ function App() {
     return () => {
       cancelled = true
     }
+  }, [courseSection, currentUser, selectedCourse])
+
+  useEffect(() => {
+    if (courseSection !== 'lms' || !selectedCourse || !currentUser) return
+    void refreshSelectedLmsSubset(selectedCourse.course_code)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshSelectedLmsSubset reads currentUser and selectedCourse, which are listed here.
   }, [courseSection, currentUser, selectedCourse])
 
   useEffect(() => {
@@ -2148,6 +2264,185 @@ function App() {
     }
   }
 
+
+  async function refreshSelectedLmsSubset(courseCode = selectedCourse?.course_code) {
+    if (!courseCode || !currentUser || (currentUser.role !== 'student' && currentUser.role !== 'professor')) return
+
+    setLmsLoading(true)
+    try {
+      setError(null)
+      if (currentUser.role === 'student') {
+        const [nextGrades, nextQnaThreads, nextProgress] = await Promise.all([
+          api.getStudentGrades(currentUser.login_id, courseCode),
+          api.listStudentQna(currentUser.login_id, courseCode),
+          api.listStudentLearningProgress(currentUser.login_id, courseCode),
+        ])
+        setStudentGrades(nextGrades)
+        setProfessorGrades([])
+        setQnaThreads(nextQnaThreads)
+        setStudentLearningProgress(nextProgress)
+        setProfessorLearningProgress([])
+        setLearningProgressDrafts(
+          Object.fromEntries(nextProgress.map((item) => [item.learning_item_id, String(item.progress_percent ?? 0)])),
+        )
+      } else {
+        const [nextGrades, nextQnaThreads, nextProgress] = await Promise.all([
+          api.getProfessorGrades(currentUser.login_id, courseCode),
+          api.listProfessorQna(currentUser.login_id, courseCode),
+          api.listProfessorLearningProgress(currentUser.login_id, courseCode),
+        ])
+        setStudentGrades(null)
+        setProfessorGrades(nextGrades)
+        setQnaThreads(nextQnaThreads)
+        setStudentLearningProgress([])
+        setProfessorLearningProgress(nextProgress)
+        setQnaAnswerDrafts(
+          Object.fromEntries(nextQnaThreads.map((thread) => [thread.id, qnaAnswerDrafts[thread.id] ?? ''])),
+        )
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '선택 LMS 정보를 불러오지 못했습니다.')
+    } finally {
+      setLmsLoading(false)
+    }
+  }
+
+  async function handleStudentQnaCreate(event: FormEvent) {
+    event.preventDefault()
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
+    if (!qnaTitle.trim() || !qnaBody.trim()) {
+      setError('문의 제목과 내용을 입력해주세요.')
+      return
+    }
+
+    setLmsLoading(true)
+    try {
+      setError(null)
+      setLmsMessage(null)
+      const thread = await api.createStudentQna(currentUser.login_id, selectedCourse.course_code, {
+        title: qnaTitle.trim(),
+        body: qnaBody.trim(),
+      })
+      setQnaThreads((current) => [thread, ...current.filter((item) => item.id !== thread.id)])
+      setQnaTitle('')
+      setQnaBody('')
+      setLmsMessage('문의를 등록했습니다.')
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '문의를 등록하지 못했습니다.')
+    } finally {
+      setLmsLoading(false)
+    }
+  }
+
+  async function handleProfessorQnaAnswer(threadId: number) {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    const body = qnaAnswerDrafts[threadId]?.trim() ?? ''
+    if (!body) {
+      setError('답변 내용을 입력해주세요.')
+      return
+    }
+
+    setLmsLoading(true)
+    try {
+      setError(null)
+      setLmsMessage(null)
+      const thread = await api.answerProfessorQna(currentUser.login_id, selectedCourse.course_code, threadId, {
+        body,
+        close: qnaAnswerCloseDrafts[threadId] ?? false,
+      })
+      setQnaThreads((current) => current.map((item) => (item.id === thread.id ? thread : item)))
+      setQnaAnswerDrafts((current) => ({ ...current, [threadId]: '' }))
+      setQnaAnswerCloseDrafts((current) => ({ ...current, [threadId]: false }))
+      setLmsMessage('문의 답변을 저장했습니다.')
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '문의 답변을 저장하지 못했습니다.')
+    } finally {
+      setLmsLoading(false)
+    }
+  }
+
+  async function handleStudentLearningProgressSave(item: StudentLearningProgressItem) {
+    if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
+    const draftValue = learningProgressDrafts[item.learning_item_id] ?? String(item.progress_percent ?? 0)
+    const progressPercent = Math.max(0, Math.min(100, Number(draftValue)))
+    if (Number.isNaN(progressPercent)) {
+      setError('진도율은 0부터 100 사이의 숫자로 입력해주세요.')
+      return
+    }
+
+    setLmsLoading(true)
+    try {
+      setError(null)
+      setLmsMessage(null)
+      const nextItem = await api.updateStudentLearningProgress(
+        currentUser.login_id,
+        selectedCourse.course_code,
+        item.learning_item_id,
+        {
+          progress_percent: progressPercent,
+          status: getLearningProgressStatus(progressPercent),
+        },
+      )
+      setStudentLearningProgress((current) => current.map((progress) => (
+        progress.learning_item_id === nextItem.learning_item_id ? nextItem : progress
+      )))
+      setLearningProgressDrafts((current) => ({ ...current, [nextItem.learning_item_id]: String(nextItem.progress_percent) }))
+      setLmsMessage('학습 진도율을 저장했습니다.')
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '학습 진도율을 저장하지 못했습니다.')
+    } finally {
+      setLmsLoading(false)
+    }
+  }
+
+  async function handleProfessorAssignmentGrade(event: FormEvent, submissionId: number) {
+    event.preventDefault()
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse || !professorAssignmentDetail) return
+    const draft = assignmentGradeDrafts[submissionId]
+    if (!draft) return
+    const score = draft.score.trim() === '' ? null : Number(draft.score)
+    const maxScore = professorAssignmentDetail.max_score ?? professorAssignmentDetail.submissions.find((item) => item.id === submissionId)?.max_score ?? 100
+    if (score != null && (Number.isNaN(score) || score < 0 || score > Number(maxScore))) {
+      setError(`점수는 0점부터 ${Number(maxScore).toFixed(1)}점 사이로 입력해주세요.`)
+      return
+    }
+
+    setAssignmentBusyKey(`grade-${submissionId}`)
+    try {
+      setError(null)
+      setAssignmentMessage(null)
+      const response = await api.gradeProfessorAssignmentSubmission(
+        currentUser.login_id,
+        selectedCourse.course_code,
+        professorAssignmentDetail.id,
+        submissionId,
+        {
+          score,
+          feedback: draft.feedback.trim() || null,
+          grading_status: draft.gradingStatus,
+        },
+      )
+      if ('submissions' in response) {
+        setProfessorAssignmentDetail(response)
+      } else {
+        setProfessorAssignmentDetail((current) => current
+          ? {
+              ...current,
+              submissions: current.submissions.map((submission) => (
+                submission.id === response.id ? { ...submission, ...response } : submission
+              )),
+            }
+          : current)
+      }
+      setAssignmentMessage('채점 결과를 저장했습니다.')
+      await loadProfessorAssignmentList(selectedCourse.course_code)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '채점 결과를 저장하지 못했습니다.')
+    } finally {
+      setAssignmentBusyKey(null)
+    }
+  }
+
   async function openNotice(notice: Notice, fromView: AppView) {
     if (!currentUser) return
 
@@ -2232,6 +2527,18 @@ function App() {
       setSelectedProfessorAssignmentSubmissionId(null)
       setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
       setAssignmentMessage(null)
+      setAssignmentGradeDrafts({})
+      setStudentGrades(null)
+      setProfessorGrades([])
+      setQnaThreads([])
+      setQnaTitle('')
+      setQnaBody('')
+      setQnaAnswerDrafts({})
+      setQnaAnswerCloseDrafts({})
+      setStudentLearningProgress([])
+      setProfessorLearningProgress([])
+      setLearningProgressDrafts({})
+      setLmsMessage(null)
       setStudentExams([])
       setStudentExamDetail(null)
       setProfessorExams([])
@@ -2397,11 +2704,11 @@ function App() {
     ]
 
     if (isStudent) {
-      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 확인' }]
+      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'lms', label: '성적·문의·진도' }, { id: 'attendance', label: '출석 확인' }]
     }
 
     if (isProfessor) {
-      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'attendance', label: '출석 탭' }, { id: 'manage', label: '강의 운영' }]
+      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'lms', label: '성적·문의·진도' }, { id: 'attendance', label: '출석 탭' }, { id: 'manage', label: '강의 운영' }]
     }
 
     return commonItems
@@ -5173,6 +5480,71 @@ function App() {
                             <strong>제출 본문</strong>
                             <p>{selectedSubmission.submission_text ?? '제출 본문 없이 파일만 제출했습니다.'}</p>
                           </div>
+                          <form className="assignment-form" onSubmit={(event) => void handleProfessorAssignmentGrade(event, selectedSubmission.id)}>
+                            <div className="assignment-form-grid">
+                              <label>
+                                점수 / {formatOptionalScore(selectedSubmission.max_score ?? professorAssignmentDetail.max_score ?? 100)}
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={selectedSubmission.max_score ?? professorAssignmentDetail.max_score ?? 100}
+                                  step="0.1"
+                                  value={assignmentGradeDrafts[selectedSubmission.id]?.score ?? ''}
+                                  onChange={(event) => setAssignmentGradeDrafts((current) => ({
+                                    ...current,
+                                    [selectedSubmission.id]: {
+                                      score: event.target.value,
+                                      feedback: current[selectedSubmission.id]?.feedback ?? selectedSubmission.feedback ?? '',
+                                      gradingStatus: current[selectedSubmission.id]?.gradingStatus ?? 'graded',
+                                    },
+                                  }))}
+                                  placeholder="예: 92"
+                                />
+                              </label>
+                              <label>
+                                채점 상태
+                                <select
+                                  value={assignmentGradeDrafts[selectedSubmission.id]?.gradingStatus ?? 'submitted'}
+                                  onChange={(event) => setAssignmentGradeDrafts((current) => ({
+                                    ...current,
+                                    [selectedSubmission.id]: {
+                                      score: current[selectedSubmission.id]?.score ?? (selectedSubmission.score == null ? '' : String(selectedSubmission.score)),
+                                      feedback: current[selectedSubmission.id]?.feedback ?? selectedSubmission.feedback ?? '',
+                                      gradingStatus: event.target.value as AssignmentGradingStatus,
+                                    },
+                                  }))}
+                                >
+                                  <option value="submitted">제출됨</option>
+                                  <option value="graded">채점 완료</option>
+                                  <option value="returned">반려/재제출</option>
+                                </select>
+                              </label>
+                            </div>
+                            <label>
+                              피드백
+                              <textarea
+                                rows={4}
+                                value={assignmentGradeDrafts[selectedSubmission.id]?.feedback ?? ''}
+                                onChange={(event) => setAssignmentGradeDrafts((current) => ({
+                                  ...current,
+                                  [selectedSubmission.id]: {
+                                    score: current[selectedSubmission.id]?.score ?? (selectedSubmission.score == null ? '' : String(selectedSubmission.score)),
+                                    feedback: event.target.value,
+                                    gradingStatus: current[selectedSubmission.id]?.gradingStatus ?? 'graded',
+                                  },
+                                }))}
+                                placeholder="학생에게 공개할 피드백을 입력하세요."
+                              />
+                            </label>
+                            <div className="exam-detail-actions">
+                              <button type="submit" className="primary-button" disabled={assignmentBusyKey === `grade-${selectedSubmission.id}`}>
+                                {assignmentBusyKey === `grade-${selectedSubmission.id}` ? '저장 중...' : '채점 저장'}
+                              </button>
+                              <span className="caption-text">
+                                현재 상태: {getGradingStatusLabel(selectedSubmission.grading_status)} · {formatOptionalScore(selectedSubmission.score, '점수 없음')}
+                              </span>
+                            </div>
+                          </form>
                           {selectedSubmission.attachments.length > 0 ? (
                             <div className="assignment-attachment-stack">
                               <strong>첨부 파일</strong>
@@ -5219,6 +5591,206 @@ function App() {
       <SectionCard title="과제">
         <p className="empty-state">관리자 계정에서는 과제 화면을 직접 사용할 수 없습니다.</p>
       </SectionCard>
+    )
+  }
+
+
+  function renderGradeItems(items: GradeBookItem[]) {
+    if (items.length === 0) {
+      return <p className="empty-state">표시할 성적 항목이 없습니다.</p>
+    }
+
+    return (
+      <div className="entity-list">
+        {items.map((item) => (
+          <article key={getGradeItemKey(item)} className="entity-row entity-row--wide">
+            <div>
+              <p className="entity-title">{item.title}</p>
+              <p className="entity-subtitle">
+                {item.item_type === 'assignment' ? '과제' : item.item_type === 'exam' ? '시험' : item.item_type}
+                {item.grading_status ? ` · ${getGradingStatusLabel(item.grading_status)}` : ''}
+                {item.feedback ? ` · 피드백: ${item.feedback}` : ''}
+              </p>
+            </div>
+            <div className="entity-actions">
+              <span className="info-chip">{formatOptionalScore(item.score, '점수 없음')} / {formatOptionalScore(item.max_score, '-')}</span>
+              <span className="badge">{formatOptionalPercent(item.percent)}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+    )
+  }
+
+  function renderQnaThread(thread: CourseQnaThread) {
+    return (
+      <article key={thread.id} className="exam-list-card exam-list-card--student">
+        <div className="exam-list-card-top">
+          <div className="exam-card-copy">
+            <strong>{thread.title}</strong>
+            <p>{thread.body}</p>
+            <span className="caption-text">
+              {thread.student_name ?? thread.student_id ?? '학생'} · {formatBoardDate(thread.updated_at ?? thread.created_at)}
+            </span>
+          </div>
+          <span className="status-pill status-pill--live">{getQnaStatusLabel(thread.status)}</span>
+        </div>
+        {thread.posts?.length ? (
+          <div className="helper-list">
+            {thread.posts.map((post) => (
+              <div key={post.id} className="helper-row">
+                <strong>{post.post_type === 'answer' ? '답변' : post.post_type === 'question' ? '질문' : '댓글'}</strong>
+                <span>{post.body}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {isProfessor ? (
+          <div className="stack-form">
+            <label>
+              답변 작성
+              <textarea
+                rows={3}
+                value={qnaAnswerDrafts[thread.id] ?? ''}
+                onChange={(event) => setQnaAnswerDrafts((current) => ({ ...current, [thread.id]: event.target.value }))}
+                placeholder="학생 문의에 대한 답변을 입력하세요."
+              />
+            </label>
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={qnaAnswerCloseDrafts[thread.id] ?? false}
+                onChange={(event) => setQnaAnswerCloseDrafts((current) => ({ ...current, [thread.id]: event.target.checked }))}
+              />
+              답변 후 문의 종료
+            </label>
+            <div className="exam-detail-actions">
+              <button type="button" className="primary-button" onClick={() => void handleProfessorQnaAnswer(thread.id)}>
+                답변 저장
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </article>
+    )
+  }
+
+  function renderCourseSelectedLms() {
+    if (!isStudent && !isProfessor) {
+      return (
+        <SectionCard title="성적·문의·진도">
+          <p className="empty-state">관리자 계정에서는 선택 LMS 화면을 직접 사용할 수 없습니다.</p>
+        </SectionCard>
+      )
+    }
+
+    return (
+      <div className="course-stack">
+        {lmsMessage ? <p className="banner banner--success">{lmsMessage}</p> : null}
+        {lmsLoading ? <p className="empty-state">선택 LMS 정보를 불러오는 중입니다.</p> : null}
+
+        {isStudent ? (
+          <>
+            <SectionCard title="성적·피드백" action={<span className="info-chip">평균 {formatOptionalPercent(studentGrades?.overall_percent)}</span>}>
+              {renderGradeItems(studentGrades?.items ?? [])}
+            </SectionCard>
+
+            <SectionCard title="학습 진도율" action={<span className="info-chip">{studentLearningProgress.length}건</span>}>
+              {studentLearningProgress.length === 0 ? <p className="empty-state">표시할 진도 정보가 없습니다.</p> : null}
+              <div className="entity-list">
+                {studentLearningProgress.map((item) => (
+                  <article key={item.learning_item_id} className="entity-row entity-row--wide">
+                    <div>
+                      <p className="entity-title">{item.title}</p>
+                      <p className="entity-subtitle">
+                        {item.week_label ?? '주차 미지정'} · {getLearningProgressStatusLabel(item.status)} · 최근 {formatDateTime(item.updated_at)}
+                      </p>
+                    </div>
+                    <div className="entity-actions">
+                      <input
+                        aria-label={`${item.title} 진도율`}
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={learningProgressDrafts[item.learning_item_id] ?? String(item.progress_percent ?? 0)}
+                        onChange={(event) => setLearningProgressDrafts((current) => ({
+                          ...current,
+                          [item.learning_item_id]: event.target.value,
+                        }))}
+                      />
+                      <button type="button" className="text-button" onClick={() => void handleStudentLearningProgressSave(item)}>
+                        진도 저장
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="질문게시판·문의" action={<span className="info-chip">{qnaThreads.length}건</span>}>
+              <form className="stack-form" onSubmit={handleStudentQnaCreate}>
+                <label>
+                  문의 제목
+                  <input value={qnaTitle} onChange={(event) => setQnaTitle(event.target.value)} placeholder="문의 제목" />
+                </label>
+                <label>
+                  문의 내용
+                  <textarea rows={4} value={qnaBody} onChange={(event) => setQnaBody(event.target.value)} placeholder="교수님께 문의할 내용을 입력하세요." />
+                </label>
+                <button type="submit" className="primary-button">문의 등록</button>
+              </form>
+              <div className="exam-list-grid">
+                {qnaThreads.map(renderQnaThread)}
+              </div>
+              {qnaThreads.length === 0 ? <p className="empty-state">등록된 문의가 없습니다.</p> : null}
+            </SectionCard>
+          </>
+        ) : null}
+
+        {isProfessor ? (
+          <>
+            <SectionCard title="성적 현황" action={<span className="info-chip">{professorGrades.length}명</span>}>
+              {professorGrades.length === 0 ? <p className="empty-state">표시할 성적 현황이 없습니다.</p> : null}
+              <div className="course-stack">
+                {professorGrades.map((student) => (
+                  <article key={student.student_id} className="section-card section-card--compact">
+                    <header className="section-head">
+                      <h3>{student.student_name}</h3>
+                      <span className="info-chip">{student.student_id} · 평균 {formatOptionalPercent(student.overall_percent)}</span>
+                    </header>
+                    {renderGradeItems(student.items)}
+                  </article>
+                ))}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="학생별 학습 진도" action={<span className="info-chip">{professorLearningProgress.length}건</span>}>
+              {professorLearningProgress.length === 0 ? <p className="empty-state">표시할 진도 현황이 없습니다.</p> : null}
+              <div className="entity-list">
+                {professorLearningProgress.map((item) => (
+                  <article key={`${item.student_id}-${item.learning_item_id}`} className="entity-row entity-row--wide">
+                    <div>
+                      <p className="entity-title">{item.student_name} · {item.title}</p>
+                      <p className="entity-subtitle">{item.student_id} · {item.week_label ?? '주차 미지정'} · {getLearningProgressStatusLabel(item.status)}</p>
+                    </div>
+                    <div className="entity-actions">
+                      <span className="badge">{formatOptionalPercent(item.progress_percent)}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="질문 답변" action={<span className="info-chip">{qnaThreads.length}건</span>}>
+              <div className="exam-list-grid">
+                {qnaThreads.map(renderQnaThread)}
+              </div>
+              {qnaThreads.length === 0 ? <p className="empty-state">등록된 문의가 없습니다.</p> : null}
+            </SectionCard>
+          </>
+        ) : null}
+      </div>
     )
   }
 
@@ -5303,6 +5875,7 @@ function App() {
           {courseSection === 'notices' ? renderCourseNotices() : null}
           {courseSection === 'assignments' ? renderCourseAssignments() : null}
           {courseSection === 'exams' ? renderCourseExams() : null}
+          {courseSection === 'lms' ? renderCourseSelectedLms() : null}
           {courseSection === 'attendance' ? renderCourseAttendance() : null}
           {courseSection === 'manage' ? renderCourseManage() : null}
         </div>

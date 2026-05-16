@@ -1,4 +1,4 @@
-export type CourseSection = 'overview' | 'content' | 'notices' | 'assignments' | 'exams' | 'attendance' | 'manage'
+export type CourseSection = 'overview' | 'content' | 'notices' | 'assignments' | 'exams' | 'lms' | 'attendance' | 'manage'
 export type AttendancePage = 'timeline' | 'timer' | 'roster'
 
 export type AppRoute =
@@ -90,7 +90,7 @@ export function parseAppRoute(pathname: string): AppRoute {
     }
   }
 
-  const courseSectionMatch = normalizedPath.match(/^\/courses\/([^/]+)\/(content|notices|assignments|exams|attendance|manage)$/)
+  const courseSectionMatch = normalizedPath.match(/^\/courses\/([^/]+)\/(content|notices|assignments|exams|lms|attendance|manage)$/)
   if (courseSectionMatch) {
     return {
       kind: 'course',
