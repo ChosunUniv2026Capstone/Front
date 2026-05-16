@@ -394,6 +394,7 @@ export type AdminPresenceOverlayRequest = {
   stations: Array<{
     macAddress: string
     apId?: string | null
+    present?: boolean
     associated?: boolean | null
     authorized?: boolean | null
     authenticated?: boolean | null
@@ -1045,10 +1046,15 @@ export const api = {
   listUsers: () => request<UserSummary[]>('/api/admin/users'),
   listClassrooms: () => request<Classroom[]>('/api/admin/classrooms'),
   listClassroomNetworks: () => request<ClassroomNetwork[]>('/api/admin/classroom-networks'),
-  getAdminPresenceSnapshot: (classroomCode: string, options?: { refresh?: boolean }) =>
-    request<AdminPresenceSnapshot>(
-      `/api/admin/presence/classrooms/${classroomCode}/snapshot${options?.refresh ? '?refresh=true' : ''}`,
-    ),
+  getAdminPresenceSnapshot: (classroomCode: string, options?: { refresh?: boolean; source?: 'auto' | 'demo' }) => {
+    const params = new URLSearchParams()
+    if (options?.refresh) params.set('refresh', 'true')
+    if (options?.source && options.source !== 'auto') params.set('source', options.source)
+    const query = params.toString()
+    return request<AdminPresenceSnapshot>(
+      `/api/admin/presence/classrooms/${classroomCode}/snapshot${query ? `?${query}` : ''}`,
+    )
+  },
   applyAdminPresenceOverlay: (classroomCode: string, payload: AdminPresenceOverlayRequest) =>
     request<AdminPresenceSnapshot>(`/api/admin/presence/classrooms/${classroomCode}/dummy-controls`, {
       method: 'POST',
