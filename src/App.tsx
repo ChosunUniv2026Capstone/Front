@@ -20,6 +20,7 @@ import {
   type StudentExamQuestion,
   type StudentExamSummary,
   type StudentAttendanceEligibilitySummary,
+  type StudentAttendanceSlotEligibility,
   type StudentAttendanceSemesterMatrix,
   type StudentAttendanceSession,
   type AdminPresenceOverlayRequest,
@@ -247,9 +248,25 @@ function getEligibilityReasonLabel(reasonCode?: string | null) {
       return '등록된 활성 단말이 없어 시험 또는 출석 확인을 진행할 수 없습니다.'
     case 'DEVICE_NOT_PRESENT':
       return '등록 단말이 현재 강의실 네트워크에서 관측되지 않았습니다.'
+    case 'AP_OFFLINE':
+      return '강의실 AP 연결이 끊겨 스마트 출석을 사용할 수 없습니다.'
     default:
       return '현재 조건으로는 확인이 제한되었습니다.'
   }
+}
+
+
+function isApOfflineAttendanceSession(session: StudentAttendanceSession) {
+  const eligibility = session.eligibility
+  const perSlot: StudentAttendanceSlotEligibility[] = 'per_slot' in eligibility ? eligibility.per_slot : []
+  return perSlot.length > 0 && perSlot.every((item) => item.eligibility.reason_code === 'AP_OFFLINE')
+}
+
+function getStudentCheckInButtonText(session: StudentAttendanceSession, submittingSessionId: number | null) {
+  if (submittingSessionId === session.session_id) return '처리 중...'
+  if (session.can_check_in) return '출석하기'
+  if (isApOfflineAttendanceSession(session)) return 'AP 연결 끊김'
+  return '출석 불가'
 }
 
 function formatFileSize(bytes?: number | null) {
@@ -3579,7 +3596,7 @@ function App() {
                           onClick={() => void handleStudentCheckIn(session.session_id)}
                           disabled={!session.can_check_in || studentSubmittingSessionId === session.session_id}
                         >
-                          {studentSubmittingSessionId === session.session_id ? '처리 중...' : session.can_check_in ? '출석하기' : '출석 불가'}
+                          {getStudentCheckInButtonText(session, studentSubmittingSessionId)}
                         </button>
                       </article>
                     )
