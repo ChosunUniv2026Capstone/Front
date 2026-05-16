@@ -255,6 +255,10 @@ function getEligibilityReasonLabel(reasonCode?: string | null) {
   }
 }
 
+function getProximityCheckSummary(eligible: boolean) {
+  return eligible ? '강의실 인접 확인됨' : '강의실 인접 확인불가'
+}
+
 
 function isApOfflineAttendanceSession(session: StudentAttendanceSession) {
   const eligibility = session.eligibility
@@ -985,7 +989,7 @@ function App() {
         })
         setEligibility(result)
       } catch (caughtError) {
-        setError(caughtError instanceof Error ? caughtError.message : '재실 확인에 실패했습니다.')
+        setError(caughtError instanceof Error ? caughtError.message : '인접성 확인에 실패했습니다.')
       }
     })
   }
@@ -2898,8 +2902,8 @@ function App() {
                     <span>등록 단말</span>
                   </div>
                   <div>
-                    <strong>{eligibility ? (eligibility.eligible ? '이용 가능' : '확인 필요') : '-'}</strong>
-                    <span>최근 확인 상태</span>
+                    <strong>{eligibility ? getProximityCheckSummary(eligibility.eligible) : '-'}</strong>
+                    <span>최근 인접성 확인</span>
                   </div>
                 </>
               )}
@@ -3532,7 +3536,7 @@ function App() {
       <div className="course-stack">
         {isStudent ? (
           <>
-            <SectionCard title="출석 · 시험 확인" action={<span className="caption-text">시간과 상관없이 현재 강의 기준으로 조회할 수 있습니다.</span>}>
+            <SectionCard title="출석 · 시험 확인" action={<span className="caption-text">강의 시간과 관계없이 현재 강의실 기준으로 확인합니다.</span>}>
               <form className="stack" onSubmit={handleCheckEligibility}>
                 <div className="helper-list">
                   <div className="helper-row">
@@ -3549,8 +3553,16 @@ function App() {
                   </div>
                 </div>
                 <button type="submit" disabled={isPending}>
-                  {isPending ? '확인 중...' : '재실 가능 여부 확인'}
+                  {isPending ? '확인 중...' : '인접성 확인'}
                 </button>
+                {eligibility ? (
+                  <p
+                    className={`proximity-check-result proximity-check-result--${eligibility.eligible ? 'ok' : 'blocked'}`}
+                    aria-live="polite"
+                  >
+                    {getProximityCheckSummary(eligibility.eligible)}
+                  </p>
+                ) : null}
               </form>
             </SectionCard>
 
@@ -4070,39 +4082,6 @@ function App() {
             ) : null}
           </div>
         )}
-
-        {isStudent ? (
-          <SectionCard title="확인 결과">
-            {eligibility ? (
-              <div className="result-card">
-                <div className="result-summary">
-                  <span className={`status-pill status-pill--${eligibility.eligible ? 'ok' : 'blocked'}`}>
-                    {eligibility.eligible ? '이용 가능' : '이용 불가'}
-                  </span>
-                  <p>{getEligibilityReasonLabel(eligibility.reason_code)}</p>
-                  <span className="caption-text">reason_code: {eligibility.reason_code}</span>
-                </div>
-                <div className="detail-grid">
-                  <div>
-                    <dt>등록 단말</dt>
-                    <dd>{eligibility.matched_device_mac ?? '-'}</dd>
-                  </div>
-                  <div>
-                    <dt>관측 시각</dt>
-                    <dd>{eligibility.observed_at ?? '-'}</dd>
-                  </div>
-                  <div>
-                    <dt>스냅샷 지연</dt>
-                    <dd>{eligibility.snapshot_age_seconds ?? '-'}초</dd>
-                  </div>
-                </div>
-                <pre>{formatJson(eligibility.evidence)}</pre>
-              </div>
-            ) : (
-              <p className="empty-state">아직 확인 결과가 없습니다.</p>
-            )}
-          </SectionCard>
-        ) : null}
       </div>
     )
   }

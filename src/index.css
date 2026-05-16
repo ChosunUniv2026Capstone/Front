@@ -256,6 +256,20 @@ textarea {
   letter-spacing: 0;
 }
 
+.proximity-check-result {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.proximity-check-result--ok {
+  color: var(--success);
+}
+
+.proximity-check-result--blocked {
+  color: var(--danger);
+}
+
 .system-name {
   font-size: 0.88rem;
   font-weight: 800;
