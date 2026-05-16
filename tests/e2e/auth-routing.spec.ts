@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test'
 
+const apiEnvelope = <T,>(data: T) => {
+  if (data && typeof data === 'object' && 'success' in data) {
+    return data
+  }
+  return { success: true, data, message: 'ok', meta: {} }
+}
+
 const professorSession = {
   success: true,
   data: {
@@ -208,31 +215,31 @@ async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
   })
 
   await page.route('**/api/auth/bootstrap', async (route) => {
-    await route.fulfill({ json: professorSession })
+    await route.fulfill({ json: apiEnvelope(professorSession) })
   })
 
   await page.route('**/api/auth/me', async (route) => {
-    await route.fulfill({ json: professorSession })
+    await route.fulfill({ json: apiEnvelope(professorSession) })
   })
 
   await page.route('**/api/professors/PRF002/courses', async (route) => {
-    await route.fulfill({ json: professorCourses })
+    await route.fulfill({ json: apiEnvelope(professorCourses) })
   })
 
   await page.route('**/api/notices/PRF002', async (route) => {
-    await route.fulfill({ json: [] })
+    await route.fulfill({ json: apiEnvelope([]) })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/timeline', async (route) => {
-    await route.fulfill({ json: attendanceTimeline })
+    await route.fulfill({ json: apiEnvelope(attendanceTimeline) })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/student-stats', async (route) => {
-    await route.fulfill({ json: professorStudentStats })
+    await route.fulfill({ json: apiEnvelope(professorStudentStats) })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/slot-roster?projection_key=*', async (route) => {
-    await route.fulfill({ json: slotRoster })
+    await route.fulfill({ json: apiEnvelope(slotRoster) })
   })
 }
 
@@ -299,27 +306,27 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
   })
 
   await page.route('**/api/auth/bootstrap', async (route) => {
-    await route.fulfill({ json: professorSession })
+    await route.fulfill({ json: apiEnvelope(professorSession) })
   })
 
   await page.route('**/api/auth/me', async (route) => {
-    await route.fulfill({ json: professorSession })
+    await route.fulfill({ json: apiEnvelope(professorSession) })
   })
 
   await page.route('**/api/professors/PRF002/courses', async (route) => {
-    await route.fulfill({ json: professorCourses })
+    await route.fulfill({ json: apiEnvelope(professorCourses) })
   })
 
   await page.route('**/api/notices/PRF002', async (route) => {
-    await route.fulfill({ json: [] })
+    await route.fulfill({ json: apiEnvelope([]) })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/timeline', async (route) => {
-    await route.fulfill({ json: timelineResponse() })
+    await route.fulfill({ json: apiEnvelope(timelineResponse()) })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/student-stats', async (route) => {
-    await route.fulfill({ json: professorStudentStats })
+    await route.fulfill({ json: apiEnvelope(professorStudentStats) })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/sessions/batch', async (route) => {
@@ -336,7 +343,7 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
     rosterState.session.expires_at = slotState.expires_at
 
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         course_code: 'CSE116',
         mode: body.mode,
         results: [
@@ -354,7 +361,7 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
         changed_projection_keys: [projectionKey],
         changed_session_ids: nextSessionId ? [nextSessionId] : [],
         occurred_at: '2099-03-03T15:00:00Z',
-      },
+      }),
     })
   })
 
@@ -364,23 +371,23 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
     rosterState.session.status = 'closed'
     rosterState.session.expires_at = null
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         session_id: slotState.session_id,
         projection_key: projectionKey,
         status: 'closed',
         version: 2,
         occurred_at: '2099-03-03T15:05:00Z',
         course_code: 'CSE116',
-      },
+      }),
     })
   })
 
   await page.route('**/api/professors/PRF002/attendance/sessions/*/roster', async (route) => {
-    await route.fulfill({ json: rosterState })
+    await route.fulfill({ json: apiEnvelope(rosterState) })
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/slot-roster?projection_key=*', async (route) => {
-    await route.fulfill({ json: rosterState })
+    await route.fulfill({ json: apiEnvelope(rosterState) })
   })
 }
 
@@ -418,28 +425,28 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
   })
 
   await page.route('**/api/auth/bootstrap', async (route) => {
-    await route.fulfill({ json: studentSession })
+    await route.fulfill({ json: apiEnvelope(studentSession) })
   })
 
   await page.route('**/api/auth/me', async (route) => {
-    await route.fulfill({ json: studentSession })
+    await route.fulfill({ json: apiEnvelope(studentSession) })
   })
 
   await page.route('**/api/students/20201234/courses', async (route) => {
-    await route.fulfill({ json: studentCourses })
+    await route.fulfill({ json: apiEnvelope(studentCourses) })
   })
 
   await page.route('**/api/notices/20201234', async (route) => {
-    await route.fulfill({ json: [] })
+    await route.fulfill({ json: apiEnvelope([]) })
   })
 
   await page.route('**/api/students/20201234/devices', async (route) => {
-    await route.fulfill({ json: [] })
+    await route.fulfill({ json: apiEnvelope([]) })
   })
 
   await page.route('**/api/students/20201234/courses/CSE116/attendance/active-sessions', async (route) => {
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         course_code: 'CSE116',
         student_id: '20201234',
         sessions: [
@@ -482,13 +489,13 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
             version: 1,
           },
         ],
-      },
+      }),
     })
   })
 
   await page.route('**/api/students/20201234/courses/CSE116/attendance/semester-matrix', async (route) => {
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         ...studentSemesterMatrix,
         weeks: [
           {
@@ -501,13 +508,13 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
             ],
           },
         ],
-      },
+      }),
     })
   })
 
   await page.route('**/api/students/20201234/attendance/sessions/701/check-in', async (route) => {
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         code: 'ATTENDANCE_CHECK_IN_OK',
         session_id: 701,
         projection_key: projectionKey,
@@ -517,7 +524,7 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
         occurred_at: '2099-03-03T15:01:00Z',
         course_code: 'CSE116',
         idempotent: false,
-      },
+      }),
     })
   })
 }
@@ -656,20 +663,20 @@ test('closing smart attendance refreshes roster state without requiring manual r
 
   await page.route('**/api/professors/PRF002/attendance/sessions/*/close', async (route) => {
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         session_id: 701,
         projection_key: projectionKey,
         status: 'closed',
         version: 2,
         occurred_at: '2099-03-03T15:05:00Z',
         course_code: 'CSE116',
-      },
+      }),
     })
   })
 
   await page.route('**/api/professors/PRF002/attendance/sessions/*/roster', async (route) => {
     await route.fulfill({
-      json: {
+      json: apiEnvelope({
         session: {
           ...slotRoster.session,
           session_id: 701,
@@ -693,7 +700,7 @@ test('closing smart attendance refreshes roster state without requiring manual r
           official: 0,
           sick: 0,
         },
-      },
+      }),
     })
   })
 
