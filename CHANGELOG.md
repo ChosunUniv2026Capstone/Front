@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.6](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.5...smart-class-front-v0.5.6) (2026-05-18)
+
+
+### Features
+
+* **frontend:** add bottom roster bulk save action for attendance operations
+
 ## [0.5.5](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.4...smart-class-front-v0.5.5) (2026-05-18)
 
 
