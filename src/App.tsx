@@ -1463,10 +1463,10 @@ function App() {
     navigate(safeAttendanceRoute(slot.course_code, 'roster', { projectionKey: slot.projection_key }))
   }
 
-  function openAttendanceModal(slot: AttendanceSlot) {
+  function openAttendanceModal(slot: AttendanceSlot, preferredMode?: 'manual' | 'smart' | 'canceled') {
     setAttendanceModalAnchorSlot(slot)
     setAttendanceModalOpen(true)
-    setSelectedAttendanceMode(slot.slot_state === 'canceled' ? 'manual' : slot.session_mode === 'smart' ? 'smart' : 'manual')
+    setSelectedAttendanceMode(preferredMode ?? (slot.slot_state === 'canceled' ? 'manual' : slot.session_mode === 'smart' ? 'smart' : 'manual'))
     const sameDateSlots =
       attendanceTimeline?.weeks
         .flatMap((week) => week.slots)
@@ -1480,6 +1480,10 @@ function App() {
       slot.session_id &&
       (slot.session_status === 'closed' || slot.session_status === 'expired' || slot.session_status === 'canceled'),
     )
+  }
+
+  function canSwitchManualAttendanceSlotToSmart(slot: AttendanceSlot | null) {
+    return Boolean(slot?.session_id && slot.session_status === 'active' && slot.session_mode === 'manual')
   }
 
   function updateRosterDraft(studentIdValue: string, nextValue: Partial<{ status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string }>) {
@@ -4306,6 +4310,11 @@ function App() {
                   <button type="button" className="text-button" onClick={() => navigate(safeAttendanceRoute(selectedAttendanceSlot.course_code, 'timeline'))}>
                     타임라인으로
                   </button>
+                  {canSwitchManualAttendanceSlotToSmart(selectedAttendanceSlot) ? (
+                    <button type="button" className="secondary-button" onClick={() => openAttendanceModal(selectedAttendanceSlot, 'smart')}>
+                      스마트 출석으로 전환
+                    </button>
+                  ) : null}
                   <span className="status-pill status-pill--ok">
                     {routeSessionId != null
                       ? selectedAttendanceSlot.session_mode === 'smart'
@@ -4461,6 +4470,7 @@ function App() {
                         {week.slots.map((slot) => {
                           const badge = getSlotBadge(slot)
                           const canRestart = isRestartableAttendanceSlot(slot)
+                          const canSwitchToSmart = canSwitchManualAttendanceSlotToSmart(slot)
                           const isSelected = routeSessionId != null
                             ? slot.session_id != null && slot.session_id === routeSessionId
                             : selectedAttendanceSlot?.projection_key === slot.projection_key
@@ -4482,6 +4492,7 @@ function App() {
                                   <span>{slot.classroom_code}</span>
                                   {slot.expires_at ? <span className="caption-text">남은시간 {formatCountdown(slot.expires_at)}</span> : null}
                                   {canRestart ? <span className="caption-text">종료된 세션 · 다시 시작 가능</span> : null}
+                                  {canSwitchToSmart ? <span className="caption-text">일반출석 진행 중 · 스마트 전환 가능</span> : null}
                                 </div>
                                 <div className="caption-text">{slot.display_label}</div>
                                 <div className="attendance-slot-metrics">
@@ -4498,6 +4509,14 @@ function App() {
                                   onClick={() => openAttendanceModal(slot)}
                                 >
                                   출석 다시 시작
+                                </button>
+                              ) : canSwitchToSmart ? (
+                                <button
+                                  type="button"
+                                  className="secondary-button attendance-slot-restart"
+                                  onClick={() => openAttendanceModal(slot, 'smart')}
+                                >
+                                  스마트 출석으로 전환
                                 </button>
                               ) : null}
                             </article>

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.1...smart-class-front-v0.5.2) (2026-05-17)
+
+
+### Bug Fixes
+
+* expose smart recovery from active manual attendance ([4813dc6](https://github.com/ChosunUniv2026Capstone/Front/commit/4813dc67db98b60324eceab09b50bb836f808a8d))
+
 ## [0.5.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.0...smart-class-front-v0.5.1) (2026-05-17)
 
 
