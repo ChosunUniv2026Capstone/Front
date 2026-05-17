@@ -310,6 +310,8 @@ function getEligibilityReasonLabel(reasonCode?: string | null) {
       return '등록 단말이 현재 강의실 네트워크에서 관측되지 않았습니다.'
     case 'AP_OFFLINE':
       return '강의실 AP 연결이 끊겨 스마트 출석을 사용할 수 없습니다.'
+    case 'PRESENCE_SERVICE_UNAVAILABLE':
+      return '재실 확인 서비스가 일시적으로 응답하지 않아 확인할 수 없습니다.'
     default:
       return '현재 조건으로는 확인이 제한되었습니다.'
   }
