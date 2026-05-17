@@ -3021,6 +3021,12 @@ code,
   min-width: 0;
 }
 
+.attendance-roster-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
 .success-text {
   color: #15803d;
   font-weight: 700;

@@ -246,6 +246,8 @@ async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
 async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], options?: {
   initialSlot?: Partial<(typeof attendanceTimeline.weeks)[number]['slots'][number]>
   rosterUpdates?: Array<{ status: string; reason?: string | null }>
+  rosterUpdateRequests?: Array<{ studentId: string; status: string; reason?: string | null }>
+  rosterUpdateFailures?: string[]
   rosterStudents?: typeof slotRoster.students
 }) {
   const slotState = {
@@ -394,19 +396,42 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
 
   await page.route('**/api/professors/PRF002/attendance/sessions/*/students/*', async (route) => {
     const body = route.request().postDataJSON() as { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason?: string | null }
+    const studentId = new URL(route.request().url()).pathname.split('/').at(-1) ?? ''
     options?.rosterUpdates?.push(body)
-    rosterState.students = rosterState.students.map((student) => ({
-      ...student,
-      final_status: body.status,
-      attendance_reason: body.status === 'official' ? body.reason ?? null : null,
-      history_count: student.history_count + 1,
-    }))
+    options?.rosterUpdateRequests?.push({ studentId, ...body })
+
+    if (options?.rosterUpdateFailures?.includes(studentId)) {
+      await route.fulfill({
+        status: 500,
+        json: {
+          success: false,
+          data: null,
+          message: `${studentId} 저장 실패`,
+          error: {
+            code: 'TEST_SAVE_FAILED',
+            message: `${studentId} 저장 실패`,
+          },
+        },
+      })
+      return
+    }
+
+    rosterState.students = rosterState.students.map((student) =>
+      student.student_id === studentId
+        ? {
+            ...student,
+            final_status: body.status,
+            attendance_reason: body.status === 'official' ? body.reason ?? null : null,
+            history_count: student.history_count + 1,
+          }
+        : student,
+    )
     await route.fulfill({
       json: apiEnvelope({
         session_id: slotState.session_id,
         projection_key: projectionKey,
         projection_keys: [projectionKey],
-        student_id: '20201239',
+        student_id: studentId,
         new_status: body.status,
         reason: body.status === 'official' ? body.reason ?? null : null,
         version: 2,
@@ -716,19 +741,98 @@ test('manual active roster hides smart conversion and only requires official rea
   await expect(page.getByText('스마트 출석으로 전환')).toHaveCount(0)
   await expect(page.getByText('스마트 전환 가능')).toHaveCount(0)
   await expect(page.getByPlaceholder('공결 사유 입력')).toHaveCount(0)
+  const rowSaveButton = page.locator('.attendance-row-actions').getByRole('button', { name: '저장' }).first()
+  const footerSaveButton = page.locator('.attendance-roster-footer-actions').getByRole('button', { name: '전체 저장' })
+  await expect(footerSaveButton).toBeVisible()
 
   await page.locator('input[name="attendance-status-20201239"]').nth(0).check({ force: true })
-  await page.getByRole('button', { name: '저장' }).click()
+  await rowSaveButton.click()
   expect(rosterUpdates.at(-1)).toEqual({ status: 'present', reason: null })
 
   await page.locator('input[name="attendance-status-20201239"]').nth(3).check({ force: true })
   await expect(page.getByPlaceholder('공결 사유 입력')).toBeVisible()
   await expect(page.getByPlaceholder('공결 사유 입력')).toHaveValue('')
-  await expect(page.getByRole('button', { name: '저장' })).toBeDisabled()
+  await expect(rowSaveButton).toBeDisabled()
+  await expect(footerSaveButton).toBeDisabled()
 
   await page.getByPlaceholder('공결 사유 입력').fill('공결 증빙 확인')
-  await page.getByRole('button', { name: '저장' }).click()
+  await footerSaveButton.click()
   expect(rosterUpdates.at(-1)).toEqual({ status: 'official', reason: '공결 증빙 확인' })
+  await expect(page.getByText('전체 출석 상태를 저장했습니다.')).toBeVisible()
+})
+
+test('whole-roster save sends each visible student and reports partial failures', async ({ page }) => {
+  const rosterUpdateRequests: Array<{ studentId: string; status: string; reason?: string | null }> = []
+  const multiStudentRoster = [
+    {
+      ...slotRoster.students[0],
+      student_id: '20209991',
+      student_name: 'Kim Student A',
+      final_status: 'present',
+    },
+    {
+      ...slotRoster.students[0],
+      student_id: '20209992',
+      student_name: 'Kim Student B',
+      final_status: 'absent',
+    },
+    {
+      ...slotRoster.students[0],
+      student_id: '20209993',
+      student_name: 'Kim Student C',
+      final_status: 'late',
+    },
+  ]
+  await mockProfessorFlowApp(page, {
+    rosterUpdateRequests,
+    rosterStudents: multiStudentRoster,
+    initialSlot: {
+      session_id: 702,
+      session_mode: 'manual',
+      session_status: 'active',
+      slot_state: 'offline',
+      expires_at: null,
+    },
+  })
+
+  await page.goto('/courses/CSE116/attendance')
+  await page.locator('.attendance-slot-main').click()
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/702\/roster$/)
+
+  await page.locator('input[name="attendance-status-20209991"]').nth(1).check({ force: true })
+  await page.locator('input[name="attendance-status-20209992"]').nth(3).check({ force: true })
+  await page.getByLabel('Kim Student B 공결 사유').fill('공결 증빙 B')
+  await page.locator('input[name="attendance-status-20209993"]').nth(0).check({ force: true })
+  await page.locator('.attendance-roster-footer-actions').getByRole('button', { name: '전체 저장' }).click()
+  await expect(page.getByText('전체 출석 상태를 저장했습니다.')).toBeVisible()
+
+  expect(rosterUpdateRequests).toEqual([
+    { studentId: '20209991', status: 'late', reason: null },
+    { studentId: '20209992', status: 'official', reason: '공결 증빙 B' },
+    { studentId: '20209993', status: 'present', reason: null },
+  ])
+
+  rosterUpdateRequests.length = 0
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
+  await mockProfessorFlowApp(page, {
+    rosterUpdateRequests,
+    rosterUpdateFailures: ['20209992'],
+    rosterStudents: multiStudentRoster,
+    initialSlot: {
+      session_id: 702,
+      session_mode: 'manual',
+      session_status: 'active',
+      slot_state: 'offline',
+      expires_at: null,
+    },
+  })
+  await page.goto('/courses/CSE116/attendance')
+  await page.locator('.attendance-slot-main').click()
+  await page.locator('.attendance-roster-footer-actions').getByRole('button', { name: '전체 저장' }).click()
+  await expect(page.getByText(/전체 저장 중 일부만 저장됐습니다\. 저장됨 1\/3/)).toBeVisible()
+  await expect(page.getByText('전체 출석 상태를 저장했습니다.')).toHaveCount(0)
+
+  expect(rosterUpdateRequests.map((request) => request.studentId)).toEqual(['20209991', '20209992'])
 })
 
 test('clicking an active smart attendance slot opens the timer view', async ({ page }) => {
