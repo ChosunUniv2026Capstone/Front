@@ -1272,7 +1272,7 @@ export const api = {
       projection_key: string
       student_id: string
       new_status: string
-      reason: string
+      reason: string | null
       version: number
       course_code: string
       occurred_at: string
