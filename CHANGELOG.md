@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.0...smart-class-front-v0.5.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* **frontend:** explain presence service outages ([a06e74e](https://github.com/ChosunUniv2026Capstone/Front/commit/a06e74e853ef6f6cec2bc4028d9aabc8567471d0))
+
 ## [0.5.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.4.1...smart-class-front-v0.5.0) (2026-05-16)
 
 
