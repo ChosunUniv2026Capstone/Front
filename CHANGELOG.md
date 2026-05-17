@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.4...smart-class-front-v0.5.5) (2026-05-18)
+
+
+### Bug Fixes
+
+* clear stale non-official attendance reasons from roster drafts
+
 ## [0.5.4](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.3...smart-class-front-v0.5.4) (2026-05-18)
 
 

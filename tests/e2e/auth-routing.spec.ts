@@ -246,6 +246,7 @@ async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
 async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], options?: {
   initialSlot?: Partial<(typeof attendanceTimeline.weeks)[number]['slots'][number]>
   rosterUpdates?: Array<{ status: string; reason?: string | null }>
+  rosterStudents?: typeof slotRoster.students
 }) {
   const slotState = {
     ...attendanceTimeline.weeks[0].slots[0],
@@ -260,7 +261,7 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
       status: slotState.session_status ?? slotState.slot_state,
       expires_at: slotState.expires_at,
     },
-    students: slotRoster.students,
+    students: options?.rosterStudents ?? slotRoster.students,
     aggregate: slotRoster.aggregate,
   }
 
@@ -688,6 +689,13 @@ test('manual active roster hides smart conversion and only requires official rea
   const rosterUpdates: Array<{ status: string; reason?: string | null }> = []
   await mockProfessorFlowApp(page, {
     rosterUpdates,
+    rosterStudents: [
+      {
+        ...slotRoster.students[0],
+        final_status: 'present',
+        attendance_reason: '과거 일반 상태 사유',
+      },
+    ],
     initialSlot: {
       session_id: 702,
       session_mode: 'manual',
@@ -715,6 +723,7 @@ test('manual active roster hides smart conversion and only requires official rea
 
   await page.locator('input[name="attendance-status-20201239"]').nth(3).check({ force: true })
   await expect(page.getByPlaceholder('공결 사유 입력')).toBeVisible()
+  await expect(page.getByPlaceholder('공결 사유 입력')).toHaveValue('')
   await expect(page.getByRole('button', { name: '저장' })).toBeDisabled()
 
   await page.getByPlaceholder('공결 사유 입력').fill('공결 증빙 확인')
