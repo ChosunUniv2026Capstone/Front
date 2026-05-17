@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.2...smart-class-front-v0.5.3) (2026-05-17)
+
+
+### Bug Fixes
+
+* simplify attendance restart controls and route active smart slots to timer
+
 ## [0.5.2](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.1...smart-class-front-v0.5.2) (2026-05-17)
 
 
