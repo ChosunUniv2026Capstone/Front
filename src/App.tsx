@@ -1351,9 +1351,10 @@ function App() {
         if (!options?.replaceExisting && nextDrafts[student.student_id]) {
           return
         }
+        const status = (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent'
         nextDrafts[student.student_id] = {
-          status: (student.final_status as 'present' | 'absent' | 'late' | 'official' | 'sick') ?? 'absent',
-          reason: student.attendance_reason ?? '',
+          status,
+          reason: status === 'official' ? student.attendance_reason ?? '' : '',
         }
       })
       return nextDrafts
