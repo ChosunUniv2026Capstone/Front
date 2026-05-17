@@ -245,6 +245,7 @@ async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
 
 async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], options?: {
   initialSlot?: Partial<(typeof attendanceTimeline.weeks)[number]['slots'][number]>
+  rosterUpdates?: Array<{ status: string; reason?: string | null }>
 }) {
   const slotState = {
     ...attendanceTimeline.weeks[0].slots[0],
@@ -388,6 +389,31 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/slot-roster?projection_key=*', async (route) => {
     await route.fulfill({ json: apiEnvelope(rosterState) })
+  })
+
+  await page.route('**/api/professors/PRF002/attendance/sessions/*/students/*', async (route) => {
+    const body = route.request().postDataJSON() as { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason?: string | null }
+    options?.rosterUpdates?.push(body)
+    rosterState.students = rosterState.students.map((student) => ({
+      ...student,
+      final_status: body.status,
+      attendance_reason: body.status === 'official' ? body.reason ?? null : null,
+      history_count: student.history_count + 1,
+    }))
+    await route.fulfill({
+      json: apiEnvelope({
+        session_id: slotState.session_id,
+        projection_key: projectionKey,
+        projection_keys: [projectionKey],
+        student_id: '20201239',
+        new_status: body.status,
+        reason: body.status === 'official' ? body.reason ?? null : null,
+        version: 2,
+        course_code: 'CSE116',
+        occurred_at: '2099-03-03T15:02:00Z',
+        changed: true,
+      }),
+    })
   })
 }
 
@@ -656,6 +682,44 @@ test('ended attendance slot reopens from the existing check button without a sep
 
   await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/701\/timer$/)
   await expect(page.getByText('스마트 출석 진행')).toBeVisible()
+})
+
+test('manual active roster hides smart conversion and only requires official reason', async ({ page }) => {
+  const rosterUpdates: Array<{ status: string; reason?: string | null }> = []
+  await mockProfessorFlowApp(page, {
+    rosterUpdates,
+    initialSlot: {
+      session_id: 702,
+      session_mode: 'manual',
+      session_status: 'active',
+      slot_state: 'offline',
+      expires_at: null,
+    },
+  })
+
+  await page.goto('/courses/CSE116/attendance')
+
+  await expect(page.getByText('스마트 출석으로 전환')).toHaveCount(0)
+  await expect(page.getByText('스마트 전환 가능')).toHaveCount(0)
+
+  await page.locator('.attendance-slot-main').click()
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/702\/roster$/)
+  await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
+  await expect(page.getByText('스마트 출석으로 전환')).toHaveCount(0)
+  await expect(page.getByText('스마트 전환 가능')).toHaveCount(0)
+  await expect(page.getByPlaceholder('공결 사유 입력')).toHaveCount(0)
+
+  await page.locator('input[name="attendance-status-20201239"]').nth(0).check({ force: true })
+  await page.getByRole('button', { name: '저장' }).click()
+  expect(rosterUpdates.at(-1)).toEqual({ status: 'present', reason: null })
+
+  await page.locator('input[name="attendance-status-20201239"]').nth(3).check({ force: true })
+  await expect(page.getByPlaceholder('공결 사유 입력')).toBeVisible()
+  await expect(page.getByRole('button', { name: '저장' })).toBeDisabled()
+
+  await page.getByPlaceholder('공결 사유 입력').fill('공결 증빙 확인')
+  await page.getByRole('button', { name: '저장' }).click()
+  expect(rosterUpdates.at(-1)).toEqual({ status: 'official', reason: '공결 증빙 확인' })
 })
 
 test('clicking an active smart attendance slot opens the timer view', async ({ page }) => {
