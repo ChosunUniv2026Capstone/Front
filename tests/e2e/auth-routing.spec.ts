@@ -633,7 +633,7 @@ test('revisiting an ended smart route restores to roster instead of stale timer 
   await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
 })
 
-test('ended attendance slot exposes clear restart action instead of hiding reopen flow', async ({ page }) => {
+test('ended attendance slot reopens from the existing check button without a separate restart button', async ({ page }) => {
   await mockProfessorFlowApp(page, {
     initialSlot: {
       session_id: 703,
@@ -647,11 +647,31 @@ test('ended attendance slot exposes clear restart action instead of hiding reope
   await page.goto('/courses/CSE116/attendance')
 
   await expect(page.getByText('종료된 세션 · 다시 시작 가능')).toBeVisible()
-  await page.getByRole('button', { name: '출석 다시 시작' }).click()
+  await expect(page.getByRole('button', { name: '출석 다시 시작' })).toHaveCount(0)
+  await page.getByRole('button', { name: /선택$/ }).click()
   await expect(page.getByText('출석 시작 · 2026-03-03')).toBeVisible()
   await expect(page.getByText('선택된 차시 1건')).toBeVisible()
   await page.getByRole('button', { name: '스마트출석' }).click()
   await page.getByRole('button', { name: '선택 차시에 적용' }).click()
+
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/701\/timer$/)
+  await expect(page.getByText('스마트 출석 진행')).toBeVisible()
+})
+
+test('clicking an active smart attendance slot opens the timer view', async ({ page }) => {
+  await mockProfessorFlowApp(page, {
+    initialSlot: {
+      session_id: 701,
+      session_mode: 'smart',
+      session_status: 'active',
+      slot_state: 'online',
+      expires_at: '2099-03-03T15:10:00Z',
+    },
+  })
+
+  await page.goto('/courses/CSE116/attendance')
+
+  await page.locator('.attendance-slot-main').click()
 
   await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/701\/timer$/)
   await expect(page.getByText('스마트 출석 진행')).toBeVisible()

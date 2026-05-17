@@ -1452,6 +1452,10 @@ function App() {
 
   function handleAttendanceRowClick(slot: AttendanceSlot) {
     setAttendanceHistory(null)
+    if (slot.session_id && slot.session_status === 'active' && slot.session_mode === 'smart') {
+      navigate(safeAttendanceRoute(slot.course_code, 'timer', { sessionId: slot.session_id }))
+      return
+    }
     if (isRestartableAttendanceSlot(slot)) {
       openAttendanceModal(slot)
       return
@@ -4502,15 +4506,7 @@ function App() {
                                   <span className="attendance-metric attendance-metric--official">★ {slot.aggregate.official}</span>
                                 </div>
                               </button>
-                              {canRestart ? (
-                                <button
-                                  type="button"
-                                  className="secondary-button attendance-slot-restart"
-                                  onClick={() => openAttendanceModal(slot)}
-                                >
-                                  출석 다시 시작
-                                </button>
-                              ) : canSwitchToSmart ? (
+                              {canSwitchToSmart ? (
                                 <button
                                   type="button"
                                   className="secondary-button attendance-slot-restart"
