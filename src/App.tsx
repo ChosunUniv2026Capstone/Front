@@ -680,6 +680,7 @@ function App() {
   const [examNow, setExamNow] = useState(Date.now())
   const [attendanceLoading, setAttendanceLoading] = useState(false)
   const [attendanceMessage, setAttendanceMessage] = useState<string | null>(null)
+  const [attendanceBulkSaving, setAttendanceBulkSaving] = useState(false)
   const [attendanceModalOpen, setAttendanceModalOpen] = useState(false)
   const [attendanceModalAnchorSlot, setAttendanceModalAnchorSlot] = useState<AttendanceSlot | null>(null)
   const [selectedAttendanceMode, setSelectedAttendanceMode] = useState<'manual' | 'smart' | 'canceled'>('manual')
@@ -1530,6 +1531,69 @@ function App() {
       await refreshProfessorAttendance()
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '학생 출석 상태를 저장하지 못했습니다.')
+    }
+  }
+
+  async function submitAllRosterUpdates() {
+    if (!currentUser || currentUser.role !== 'professor' || !attendanceRoster) return
+    const sessionId = attendanceRoster.session.session_id
+    if (!sessionId) return
+
+    const missingDraft = attendanceRoster.students.find((student) => !rosterDrafts[student.student_id])
+    if (missingDraft) {
+      setError('출석 명단을 아직 준비 중입니다. 잠시 후 다시 저장해 주세요.')
+      return
+    }
+
+    const missingOfficialReason = attendanceRoster.students.find((student) => {
+      const draft = rosterDrafts[student.student_id]
+      return draft?.status === 'official' && !draft.reason.trim()
+    })
+    if (missingOfficialReason) {
+      setError(`${missingOfficialReason.student_name} 공결 사유를 입력해 주세요.`)
+      return
+    }
+
+    const saveTargets = attendanceRoster.students.map((student) => {
+      const draft = rosterDrafts[student.student_id]!
+      return {
+        studentId: student.student_id,
+        status: draft.status,
+        reason: draft.status === 'official' ? draft.reason.trim() : null,
+      }
+    })
+
+    let savedCount = 0
+    setError(null)
+    setAttendanceMessage(null)
+    setAttendanceBulkSaving(true)
+    try {
+      for (const target of saveTargets) {
+        await api.updateProfessorAttendanceRecord(currentUser.login_id, sessionId, target.studentId, {
+          status: target.status,
+          reason: target.reason,
+        })
+        savedCount += 1
+      }
+      setError(null)
+      setAttendanceMessage('전체 출석 상태를 저장했습니다.')
+      await loadAttendanceRoster(sessionId, { replaceDrafts: true })
+      await refreshProfessorAttendance()
+    } catch (caughtError) {
+      const detailMessage = caughtError instanceof Error ? ` ${caughtError.message}` : ''
+      const baseMessage =
+        savedCount > 0
+          ? `전체 저장 중 일부만 저장됐습니다. 저장됨 ${savedCount}/${saveTargets.length}. 현재 명단을 다시 확인해 주세요.`
+          : '전체 출석 상태를 저장하지 못했습니다.'
+      try {
+        await loadAttendanceRoster(sessionId, { replaceDrafts: true })
+        await refreshProfessorAttendance()
+      } finally {
+        setAttendanceMessage(null)
+        setError(`${baseMessage}${detailMessage}`)
+      }
+    } finally {
+      setAttendanceBulkSaving(false)
     }
   }
 
@@ -4366,8 +4430,9 @@ function App() {
                   ) : null}
                 </div>
                 {attendanceRoster ? (
-                  <div className="attendance-roster-scroll">
-                    <table className="attendance-roster-table">
+                  <>
+                    <div className="attendance-roster-scroll">
+                      <table className="attendance-roster-table">
                       <thead>
                         <tr>
                           <th scope="col">학번</th>
@@ -4394,6 +4459,7 @@ function App() {
                                     type="radio"
                                     name={radioName}
                                     checked={draft.status === 'present'}
+                                    disabled={attendanceBulkSaving}
                                     onChange={() => updateRosterDraft(student.student_id, { status: 'present' })}
                                   />
                                   <span>●</span>
@@ -4405,6 +4471,7 @@ function App() {
                                     type="radio"
                                     name={radioName}
                                     checked={draft.status === 'late'}
+                                    disabled={attendanceBulkSaving}
                                     onChange={() => updateRosterDraft(student.student_id, { status: 'late' })}
                                   />
                                   <span>▲</span>
@@ -4416,6 +4483,7 @@ function App() {
                                     type="radio"
                                     name={radioName}
                                     checked={draft.status === 'absent'}
+                                    disabled={attendanceBulkSaving}
                                     onChange={() => updateRosterDraft(student.student_id, { status: 'absent' })}
                                   />
                                   <span>✕</span>
@@ -4427,6 +4495,7 @@ function App() {
                                     type="radio"
                                     name={radioName}
                                     checked={draft.status === 'official'}
+                                    disabled={attendanceBulkSaving}
                                     onChange={() => updateRosterDraft(student.student_id, { status: 'official' })}
                                   />
                                   <span>★</span>
@@ -4437,6 +4506,7 @@ function App() {
                                   <input
                                     className="attendance-reason-input"
                                     value={draft.reason}
+                                    disabled={attendanceBulkSaving}
                                     onChange={(event) => updateRosterDraft(student.student_id, { reason: event.target.value })}
                                     placeholder="공결 사유 입력"
                                     aria-label={`${student.student_name} 공결 사유`}
@@ -4451,7 +4521,7 @@ function App() {
                                   {attendanceRoster.session.session_id ? (
                                     <button
                                       type="button"
-                                      disabled={draft.status === 'official' && !draft.reason.trim()}
+                                      disabled={attendanceBulkSaving || (draft.status === 'official' && !draft.reason.trim())}
                                       onClick={() => void submitRosterUpdate(student.student_id)}
                                     >
                                       저장
@@ -4466,8 +4536,26 @@ function App() {
                           )
                         })}
                       </tbody>
-                    </table>
-                  </div>
+                      </table>
+                    </div>
+                    {attendanceRoster.session.session_id ? (
+                      <div className="attendance-roster-footer-actions">
+                        <button
+                          type="button"
+                          disabled={
+                            attendanceBulkSaving ||
+                            attendanceRoster.students.some((student) => {
+                              const draft = rosterDrafts[student.student_id]
+                              return !draft || (draft.status === 'official' && !draft.reason.trim())
+                            })
+                          }
+                          onClick={() => void submitAllRosterUpdates()}
+                        >
+                          {attendanceBulkSaving ? '전체 저장 중...' : '전체 저장'}
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
                 ) : (
                   <p className="empty-state">학생 목록을 불러오는 중입니다.</p>
                 )}
