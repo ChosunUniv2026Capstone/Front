@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.6...smart-class-front-v0.6.0) (2026-05-21)
+
+
+### Features
+
+* **frontend:** surface professor attendance CSV downloads ([73f5e09](https://github.com/ChosunUniv2026Capstone/Front/commit/73f5e0957b592aa4f2809c7582cb7da33bb6d77e))
+
 ## [0.5.6](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.5...smart-class-front-v0.5.6) (2026-05-18)
 
 
