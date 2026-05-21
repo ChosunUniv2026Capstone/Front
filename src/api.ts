@@ -94,6 +94,8 @@ export type ReportExport = StoredObjectAttachment & {
   generated_at?: string | null
 }
 
+export type AttendanceCsvExportVariant = 'summary' | 'full'
+
 export type StudentAssignmentSubmission = {
   id: number
   score?: number | null
@@ -1284,10 +1286,14 @@ export const api = {
     request<AttendanceHistory>(`/api/professors/${professorId}/courses/${courseCode}/attendance/students/${studentId}/history`),
   getProfessorAttendanceStudentStats: (professorId: string, courseCode: string) =>
     request<ProfessorAttendanceStudentStats>(`/api/professors/${professorId}/courses/${courseCode}/attendance/student-stats`),
-  createProfessorAttendanceCsvExport: (professorId: string, courseCode: string) =>
+  createProfessorAttendanceCsvExport: (
+    professorId: string,
+    courseCode: string,
+    variant: AttendanceCsvExportVariant = 'summary',
+  ) =>
     request<ReportExport>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/attendance/report-exports`, {
       method: 'POST',
-      body: JSON.stringify({ export_type: 'attendance_csv' }),
+      body: JSON.stringify({ export_type: variant === 'full' ? 'attendance_full_csv' : 'attendance_summary_csv' }),
     }),
   listProfessorAttendanceReportExports: (professorId: string, courseCode: string) =>
     request<ReportExport[]>(`/api/professors/${pathSegment(professorId)}/courses/${pathSegment(courseCode)}/attendance/report-exports`),

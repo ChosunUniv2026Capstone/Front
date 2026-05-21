@@ -33,6 +33,7 @@ import {
   type AdminPresenceOverlayRequest,
   type AdminPresenceSnapshot,
   type AdminPresenceStation,
+  type AttendanceCsvExportVariant,
   api,
   formatJson,
   setAuthFailureHandler,
@@ -680,13 +681,13 @@ function App() {
   const [examNow, setExamNow] = useState(Date.now())
   const [attendanceLoading, setAttendanceLoading] = useState(false)
   const [attendanceMessage, setAttendanceMessage] = useState<string | null>(null)
+  const [attendanceCsvBusyVariant, setAttendanceCsvBusyVariant] = useState<AttendanceCsvExportVariant | null>(null)
   const [attendanceBulkSaving, setAttendanceBulkSaving] = useState(false)
   const [attendanceModalOpen, setAttendanceModalOpen] = useState(false)
   const [attendanceModalAnchorSlot, setAttendanceModalAnchorSlot] = useState<AttendanceSlot | null>(null)
   const [selectedAttendanceMode, setSelectedAttendanceMode] = useState<'manual' | 'smart' | 'canceled'>('manual')
   const [selectedBatchProjectionKeys, setSelectedBatchProjectionKeys] = useState<string[]>([])
   const [attendanceNow, setAttendanceNow] = useState(Date.now())
-  const [showProfessorStudentStats, setShowProfessorStudentStats] = useState(false)
   const [rosterDrafts, setRosterDrafts] = useState<
     Record<string, { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason: string }>
   >({})
@@ -1121,8 +1122,8 @@ function App() {
     setSelectedBatchProjectionKeys([])
     setStudentSubmittingSessionId(null)
     setAttendanceMessage(null)
+    setAttendanceCsvBusyVariant(null)
     setRosterDrafts({})
-    setShowProfessorStudentStats(false)
   }
 
   async function handleLogin(event: FormEvent) {
@@ -1259,7 +1260,6 @@ function App() {
     setAttendanceModalAnchorSlot(null)
     setSelectedBatchProjectionKeys([])
     setAttendanceMessage(null)
-    setShowProfessorStudentStats(false)
     setSelectedLearningItem(null)
     setLearningFilter('all')
     navigate({
@@ -1341,6 +1341,41 @@ function App() {
       setAttendanceLoading(false)
     }
   }, [currentUser, selectedCourse?.course_code])
+
+  async function downloadProfessorAttendanceCsv(variant: AttendanceCsvExportVariant) {
+    if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    const label = variant === 'full' ? '전체본' : '요약본'
+    setAttendanceCsvBusyVariant(variant)
+    setAttendanceMessage(null)
+    setError(null)
+    try {
+      const exportInfo = await api.createProfessorAttendanceCsvExport(currentUser.login_id, selectedCourse.course_code, variant)
+      const response = await fetch(
+        api.buildProfessorAttendanceReportExportUrl(currentUser.login_id, selectedCourse.course_code, exportInfo.id),
+        { credentials: 'include' },
+      )
+      if (!response.ok) {
+        throw new Error(`${label} CSV 다운로드 요청이 실패했습니다. (${response.status})`)
+      }
+      const blob = await response.blob()
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      try {
+        link.href = downloadUrl
+        link.download = exportInfo.original_filename || `attendance-${variant}-${selectedCourse.course_code}.csv`
+        document.body.appendChild(link)
+        link.click()
+      } finally {
+        link.remove()
+        window.URL.revokeObjectURL(downloadUrl)
+      }
+      setAttendanceMessage(`${label} CSV 다운로드를 시작했습니다.`)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : `${label} CSV 다운로드에 실패했습니다.`)
+    } finally {
+      setAttendanceCsvBusyVariant(null)
+    }
+  }
 
   function syncRosterDrafts(
     nextRoster: AttendanceSessionRoster,
@@ -4254,9 +4289,6 @@ function App() {
               title="교수 출석 운영 대시보드"
               action={
                 <div className="attendance-dashboard-action-group">
-                  <button type="button" className="text-button" onClick={() => setShowProfessorStudentStats((current) => !current)}>
-                    {showProfessorStudentStats ? '학생별 통계 닫기' : '학생별 통계'}
-                  </button>
                   <span className="caption-text">학기 전체 차시 + 실시간 집계</span>
                 </div>
               }
@@ -4274,40 +4306,6 @@ function App() {
                 <p className="empty-state">{attendanceLoading ? '출석 타임라인을 불러오는 중입니다.' : '출석 데이터가 아직 없습니다.'}</p>
               )}
             </SectionCard>
-            ) : null}
-            {!showProfessorTimer && !showProfessorRoster && showProfessorStudentStats ? (
-              <SectionCard title="학생별 출석 누계" action={<span className="caption-text">{selectedCourse?.course_code} 학기 전체 기준</span>}>
-                {attendanceStudentStats ? (
-                  <div className="attendance-roster-scroll">
-                    <table className="attendance-stats-table">
-                      <thead>
-                        <tr>
-                          <th scope="col">학번</th>
-                          <th scope="col">이름</th>
-                          <th scope="col">출석 차시</th>
-                          <th scope="col">지각 차시</th>
-                          <th scope="col">결석 차시</th>
-                          <th scope="col">공결 차시</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {attendanceStudentStats.rows.map((row) => (
-                          <tr key={`attendance-stat-${row.student_id}`}>
-                            <td>{row.student_id}</td>
-                            <td>{row.student_name}</td>
-                            <td>{row.present}</td>
-                            <td>{row.late}</td>
-                            <td>{row.absent}</td>
-                            <td>{row.official}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="empty-state">학생별 누계 통계를 불러오는 중입니다.</p>
-                )}
-              </SectionCard>
             ) : null}
 
             {showProfessorTimer ? (
@@ -4561,8 +4559,6 @@ function App() {
                 )}
               </SectionCard>
             ) : null}
-            {attendanceMessage ? <p className="success-text">{attendanceMessage}</p> : null}
-
             {!showProfessorTimer && !showProfessorRoster ? (
             <SectionCard title="학기별 출석 타임라인">
               {attendanceTimeline?.weeks.length ? (
@@ -4619,6 +4615,64 @@ function App() {
               )}
             </SectionCard>
             ) : null}
+            {!showProfessorTimer && !showProfessorRoster ? (
+              <SectionCard
+                title="학생별 출석 누계"
+                action={
+                  <div className="attendance-dashboard-action-group">
+                    <span className="caption-text">{selectedCourse?.course_code} 학기 전체 기준</span>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => void downloadProfessorAttendanceCsv('summary')}
+                      disabled={!attendanceStudentStats || attendanceCsvBusyVariant !== null}
+                    >
+                      {attendanceCsvBusyVariant === 'summary' ? '요약본 생성 중...' : '요약본 CSV'}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => void downloadProfessorAttendanceCsv('full')}
+                      disabled={!attendanceStudentStats || attendanceCsvBusyVariant !== null}
+                    >
+                      {attendanceCsvBusyVariant === 'full' ? '전체본 생성 중...' : '전체본 CSV'}
+                    </button>
+                  </div>
+                }
+              >
+                {attendanceStudentStats ? (
+                  <div className="attendance-roster-scroll">
+                    <table className="attendance-stats-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">학번</th>
+                          <th scope="col">이름</th>
+                          <th scope="col">출석 차시</th>
+                          <th scope="col">지각 차시</th>
+                          <th scope="col">결석 차시</th>
+                          <th scope="col">공결 차시</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendanceStudentStats.rows.map((row) => (
+                          <tr key={`attendance-stat-${row.student_id}`}>
+                            <td>{row.student_id}</td>
+                            <td>{row.student_name}</td>
+                            <td>{row.present}</td>
+                            <td>{row.late}</td>
+                            <td>{row.absent}</td>
+                            <td>{row.official}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="empty-state">학생별 누계 통계를 불러오는 중입니다.</p>
+                )}
+              </SectionCard>
+            ) : null}
+            {attendanceMessage ? <p className="success-text">{attendanceMessage}</p> : null}
 
             {attendanceModalOpen && attendanceModalAnchorSlot ? (
               <div className="attendance-modal-backdrop" role="presentation" onClick={() => setAttendanceModalOpen(false)}>
