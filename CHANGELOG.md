@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.6.0...smart-class-front-v0.6.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **frontend:** align assignment edit and qna review flows ([0c555e0](https://github.com/ChosunUniv2026Capstone/Front/commit/0c555e0e2b373aa91a3756d66d3c464053348f65))
+
 ## [0.6.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.5.6...smart-class-front-v0.6.0) (2026-05-21)
 
 
