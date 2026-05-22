@@ -259,3 +259,44 @@ test('professor can grade an assignment submission with score status and feedbac
   await expect(page.getByText('채점 결과를 저장했습니다.')).toBeVisible()
   expect(gradePayload).toMatchObject({ score: 92, grading_status: 'graded', feedback: '분석과 구현이 모두 명확합니다.' })
 })
+
+test('professor selected LMS screen hides answer controls for closed qna threads', async ({ page }) => {
+  await mockBase(page, professorSession)
+  await page.route('**/api/professors/PRF001/courses', async (route) => {
+    await route.fulfill({ json: apiEnvelope(courses) })
+  })
+  await page.route('**/api/professors/PRF001/courses/CSE116/grades', async (route) => {
+    await route.fulfill({ json: apiEnvelope([]) })
+  })
+  await page.route('**/api/professors/PRF001/courses/CSE116/learning-progress', async (route) => {
+    await route.fulfill({ json: apiEnvelope([]) })
+  })
+  await page.route('**/api/professors/PRF001/courses/CSE116/qna', async (route) => {
+    await route.fulfill({
+      json: apiEnvelope([
+        {
+          id: 701,
+          title: '마감 문의',
+          body: '추가 답변이 필요 없습니다.',
+          status: 'closed',
+          student_id: '20201234',
+          student_name: 'Kim Student 01',
+          created_at: '2026-05-16T10:00:00Z',
+          updated_at: '2026-05-16T11:00:00Z',
+          posts: [
+            { id: 801, post_type: 'question', body: '추가 답변이 필요 없습니다.', created_at: '2026-05-16T10:00:00Z' },
+            { id: 802, post_type: 'answer', body: '종료 처리했습니다.', created_at: '2026-05-16T11:00:00Z' },
+          ],
+        },
+      ]),
+    })
+  })
+
+  await page.goto('/courses/CSE116/lms')
+
+  await expect(page.getByRole('heading', { name: '질문 답변' })).toBeVisible()
+  await expect(page.getByText('마감 문의')).toBeVisible()
+  await expect(page.getByText('종료된 문의입니다. 추가 답변은 등록할 수 없습니다.')).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '답변 작성' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '답변 저장' })).toHaveCount(0)
+})

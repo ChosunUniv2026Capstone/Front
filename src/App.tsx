@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react'
 import {
   ApiRequestError,
   buildAttendanceWebSocketUrl,
+  type AssignmentAttachment,
   type AssignmentGradingStatus,
   type CourseQnaThread,
   type GradeBookItem,
@@ -167,6 +168,12 @@ function getGradingStatusLabel(status?: string | null) {
 
 function getQnaStatusLabel(status?: string | null) {
   return status ? QNA_STATUS_LABEL[status] ?? status : '-'
+}
+
+function getQnaStatusTone(status?: string | null) {
+  if (status === 'closed') return 'closed'
+  if (status === 'answered') return 'completed'
+  return 'live'
 }
 
 function getLearningProgressStatusLabel(status?: string | null) {
@@ -648,6 +655,8 @@ function App() {
   const [studentAssignmentDetail, setStudentAssignmentDetail] = useState<StudentAssignmentDetail | null>(null)
   const [studentAssignmentText, setStudentAssignmentText] = useState('')
   const [studentAssignmentFiles, setStudentAssignmentFiles] = useState<File[]>([])
+  const [studentAssignmentRetainedAttachments, setStudentAssignmentRetainedAttachments] = useState<AssignmentAttachment[]>([])
+  const [studentAssignmentEditMode, setStudentAssignmentEditMode] = useState(false)
   const [professorAssignments, setProfessorAssignments] = useState<ProfessorAssignmentSummary[]>([])
   const [professorAssignmentDetail, setProfessorAssignmentDetail] = useState<ProfessorAssignmentDetail | null>(null)
   const [selectedProfessorAssignmentSubmissionId, setSelectedProfessorAssignmentSubmissionId] = useState<number | null>(null)
@@ -1100,6 +1109,8 @@ function App() {
     setStudentAssignmentDetail(null)
     setStudentAssignmentText('')
     setStudentAssignmentFiles([])
+    setStudentAssignmentRetainedAttachments([])
+    setStudentAssignmentEditMode(false)
     setProfessorAssignments([])
     setProfessorAssignmentDetail(null)
     setSelectedProfessorAssignmentSubmissionId(null)
@@ -1234,6 +1245,8 @@ function App() {
     setStudentAssignmentDetail(null)
     setStudentAssignmentText('')
     setStudentAssignmentFiles([])
+    setStudentAssignmentRetainedAttachments([])
+    setStudentAssignmentEditMode(false)
     setProfessorAssignments([])
     setProfessorAssignmentDetail(null)
     setSelectedProfessorAssignmentSubmissionId(null)
@@ -1729,6 +1742,8 @@ function App() {
       setStudentAssignmentDetail(detail)
       setStudentAssignmentText(detail.submission?.submission_text ?? '')
       setStudentAssignmentFiles([])
+      setStudentAssignmentRetainedAttachments(detail.submission?.attachments ?? [])
+      setStudentAssignmentEditMode(!detail.submission)
       navigate({
         kind: 'course',
         courseCode: selectedCourse.course_code,
@@ -1797,24 +1812,37 @@ function App() {
   async function handleStudentAssignmentSubmit(event: FormEvent) {
     event.preventDefault()
     if (!currentUser || currentUser.role !== 'student' || !selectedCourse || !studentAssignmentDetail) return
+    if (studentAssignmentDetail.submission && !studentAssignmentEditMode) return
 
+    const hadExistingSubmission = Boolean(studentAssignmentDetail.submission)
+    const originalAttachmentIds = new Set((studentAssignmentDetail.submission?.attachments ?? []).map((attachment) => attachment.id))
+    const retainedAttachmentIds = new Set(studentAssignmentRetainedAttachments.map((attachment) => attachment.id))
+    const removeAttachmentIds = Array.from(originalAttachmentIds).filter((attachmentId) => !retainedAttachmentIds.has(attachmentId))
     setAssignmentBusyKey(`assignment-submit-${studentAssignmentDetail.id}`)
     try {
       setError(null)
       setAssignmentMessage(null)
-      const detail = await api.submitStudentAssignment(
+      await api.submitStudentAssignment(
         currentUser.login_id,
         selectedCourse.course_code,
         studentAssignmentDetail.id,
         {
           submission_text: studentAssignmentText,
+          remove_attachment_ids: removeAttachmentIds,
           files: studentAssignmentFiles,
         },
       )
-      setStudentAssignmentDetail(detail)
-      setStudentAssignmentText(detail.submission?.submission_text ?? '')
+      const refreshedDetail = await api.getStudentAssignmentDetail(
+        currentUser.login_id,
+        selectedCourse.course_code,
+        studentAssignmentDetail.id,
+      )
+      setStudentAssignmentDetail(refreshedDetail)
+      setStudentAssignmentText(refreshedDetail.submission?.submission_text ?? '')
       setStudentAssignmentFiles([])
-      setAssignmentMessage('과제를 제출했습니다.')
+      setStudentAssignmentRetainedAttachments(refreshedDetail.submission?.attachments ?? [])
+      setStudentAssignmentEditMode(false)
+      setAssignmentMessage(hadExistingSubmission ? '과제를 수정했습니다.' : '과제를 제출했습니다.')
       await loadStudentAssignmentList(selectedCourse.course_code)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '과제를 제출하지 못했습니다.')
@@ -2133,10 +2161,14 @@ function App() {
             setStudentAssignmentDetail(detail)
             setStudentAssignmentText(detail.submission?.submission_text ?? '')
             setStudentAssignmentFiles([])
+            setStudentAssignmentRetainedAttachments(detail.submission?.attachments ?? [])
+            setStudentAssignmentEditMode(!detail.submission)
           } else {
             setStudentAssignmentDetail(null)
             setStudentAssignmentText('')
             setStudentAssignmentFiles([])
+            setStudentAssignmentRetainedAttachments([])
+            setStudentAssignmentEditMode(false)
           }
         } else if (currentUser.role === 'professor') {
           const nextAssignments = await api.listProfessorAssignments(currentUser.login_id, selectedCourse.course_code)
@@ -2453,6 +2485,11 @@ function App() {
 
   async function handleProfessorQnaAnswer(threadId: number) {
     if (!currentUser || currentUser.role !== 'professor' || !selectedCourse) return
+    const targetThread = qnaThreads.find((thread) => thread.id === threadId)
+    if (targetThread?.status === 'closed') {
+      setError('종료된 문의에는 추가 답변을 등록할 수 없습니다.')
+      return
+    }
     const body = qnaAnswerDrafts[threadId]?.trim() ?? ''
     if (!body) {
       setError('답변 내용을 입력해주세요.')
@@ -2639,6 +2676,8 @@ function App() {
       setStudentAssignmentDetail(null)
       setStudentAssignmentText('')
       setStudentAssignmentFiles([])
+      setStudentAssignmentRetainedAttachments([])
+      setStudentAssignmentEditMode(false)
       setProfessorAssignments([])
       setProfessorAssignmentDetail(null)
       setSelectedProfessorAssignmentSubmissionId(null)
@@ -2994,9 +3033,9 @@ function App() {
         </div>
         <div className="metric-grid">
           {welcomeMetrics.map((metric) => (
-            <div key={metric.label} className={`metric-card${metric.tone === 'accent' ? ' metric-card--accent' : ''}`}>
-              <strong>{metric.value}</strong>
+            <div key={metric.label} className={`metric-card metric-card--overview${metric.tone === 'accent' ? ' metric-card--accent' : ''}`}>
               <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
             </div>
           ))}
         </div>
@@ -3492,35 +3531,35 @@ function App() {
 
         <aside className="side-column">
           <SectionCard title="한눈에 보기" compact>
-            <div className="summary-list summary-list--single">
+            <div className="summary-list summary-list--single summary-list--overview">
               {isProfessor ? (
                 <>
                   <div>
-                    <strong>{courses.length}</strong>
                     <span>담당 강의</span>
+                    <strong>{courses.length}</strong>
                   </div>
                   <div>
-                    <strong>{notices.length}</strong>
                     <span>공지</span>
+                    <strong>{notices.length}</strong>
                   </div>
                   <div>
-                    <strong>{selectedCourse?.course_code ?? '-'}</strong>
                     <span>선택 강의</span>
+                    <strong>{selectedCourse?.course_code ?? '-'}</strong>
                   </div>
                 </>
               ) : (
                 <>
                   <div>
-                    <strong>{courses.length}</strong>
                     <span>수강 과목</span>
+                    <strong>{courses.length}</strong>
                   </div>
                   <div>
-                    <strong>{devices.length}</strong>
                     <span>등록 단말</span>
+                    <strong>{devices.length}</strong>
                   </div>
                   <div>
-                    <strong>{eligibility ? getProximityCheckSummary(eligibility.eligible) : '-'}</strong>
                     <span>최근 인접성 확인</span>
+                    <strong>{eligibility ? getProximityCheckSummary(eligibility.eligible) : '-'}</strong>
                   </div>
                 </>
               )}
@@ -3664,18 +3703,18 @@ function App() {
 
         <aside className="side-column">
           <SectionCard title="개인 메뉴 요약" compact>
-            <div className="summary-list">
+            <div className="summary-list summary-list--profile">
               <div>
-                <strong>{currentUser ? ROLE_LABEL[currentUser.role] : '-'}</strong>
                 <span>현재 역할</span>
+                <strong>{currentUser ? ROLE_LABEL[currentUser.role] : '-'}</strong>
               </div>
               <div>
-                <strong>{courses.length}</strong>
                 <span>{isProfessor ? '담당 강의' : '수강 과목'}</span>
+                <strong>{courses.length}</strong>
               </div>
               <div>
-                <strong>{devices.length}</strong>
                 <span>등록 단말</span>
+                <strong>{devices.length}</strong>
               </div>
             </div>
           </SectionCard>
@@ -5305,6 +5344,21 @@ function App() {
 
   function renderCourseAssignments() {
     function renderStudentAssignmentSection() {
+      const hasExistingSubmission = Boolean(studentAssignmentDetail?.submission)
+      const visibleStudentAssignmentAttachments =
+        hasExistingSubmission && studentAssignmentEditMode
+          ? studentAssignmentRetainedAttachments
+          : studentAssignmentDetail?.submission?.attachments ?? []
+      const studentAssignmentBusy = studentAssignmentDetail
+        ? assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`
+        : false
+      const canEditStudentAssignment =
+        studentAssignmentDetail?.status === 'open' && (!hasExistingSubmission || studentAssignmentEditMode)
+      const studentAssignmentActionLabel = hasExistingSubmission
+        ? (studentAssignmentEditMode ? '저장' : '수정')
+        : '과제 제출'
+      const studentAssignmentBusyLabel = hasExistingSubmission && studentAssignmentEditMode ? '저장 중...' : '제출 중...'
+
       return (
         <div className="course-stack assignment-space assignment-space--student">
           {assignmentMessage ? <p className="banner banner--success">{assignmentMessage}</p> : null}
@@ -5383,11 +5437,11 @@ function App() {
                       <strong>{formatDateTime(studentAssignmentDetail.submission?.submitted_at)}</strong>
                     </article>
                   </div>
-                  {studentAssignmentDetail.submission?.attachments?.length ? (
+                  {visibleStudentAssignmentAttachments.length ? (
                     <div className="assignment-attachment-stack">
                       <strong>현재 첨부 파일</strong>
                       <div className="assignment-attachment-list">
-                        {studentAssignmentDetail.submission.attachments.map((attachment) => (
+                        {visibleStudentAssignmentAttachments.map((attachment) => (
                           <a
                             key={attachment.id}
                             className="assignment-attachment-chip"
@@ -5414,53 +5468,119 @@ function App() {
                 <article className="exam-detail-panel exam-detail-panel--submissions">
                   <header className="section-head">
                     <h3>과제 제출</h3>
-                    <span className="caption-text">글과 파일을 함께 제출할 수 있습니다.</span>
+                    <span className="caption-text">
+                      {hasExistingSubmission && !studentAssignmentEditMode
+                        ? '기존 제출 기록이 있습니다. 수정 버튼을 눌러 변경할 수 있습니다.'
+                        : '글과 파일을 함께 제출할 수 있습니다.'}
+                    </span>
                   </header>
-                  <form className="assignment-form" onSubmit={handleStudentAssignmentSubmit}>
-                    <label>
-                      제출 내용
-                      <textarea
-                        rows={8}
-                        value={studentAssignmentText}
-                        onChange={(event) => setStudentAssignmentText(event.target.value)}
-                        placeholder="교수님께 전달할 설명이나 작업 내용을 입력하세요."
-                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
-                      />
-                    </label>
-                    <label>
-                      파일 첨부
-                      <input
-                        type="file"
-                        multiple
-                        onChange={(event) => setStudentAssignmentFiles(Array.from(event.target.files ?? []))}
-                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
-                      />
-                    </label>
-                    {studentAssignmentFiles.length > 0 ? (
-                      <div className="assignment-pending-files">
-                        {studentAssignmentFiles.map((file) => (
-                          <span key={`${file.name}-${file.size}-${file.lastModified}`} className="assignment-attachment-chip">
-                            <span>{file.name}</span>
-                            <small>{formatFileSize(file.size)}</small>
-                          </span>
-                        ))}
+                  {hasExistingSubmission && !studentAssignmentEditMode ? (
+                    <div className="assignment-form">
+                      <div className="exam-submission-item">
+                        <div className="exam-submission-item-head">
+                          <strong>제출 내용</strong>
+                        </div>
+                        <p>{studentAssignmentDetail.submission?.submission_text?.trim() || '제출한 설명이 없습니다.'}</p>
                       </div>
-                    ) : null}
-                    <div className="exam-detail-actions">
-                      <button
-                        type="submit"
-                        className="primary-button"
-                        disabled={studentAssignmentDetail.status !== 'open' || assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}`}
-                      >
-                        {assignmentBusyKey === `assignment-submit-${studentAssignmentDetail.id}` ? '제출 중...' : '과제 제출'}
-                      </button>
-                      {studentAssignmentDetail.status !== 'open' ? (
-                        <span className="caption-text">진행 중인 과제만 제출하거나 수정할 수 있습니다.</span>
-                      ) : (
-                        <span className="caption-text">새 파일을 고르면 기존 첨부 파일이 교체됩니다.</span>
-                      )}
+                      <div className="exam-detail-actions">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={studentAssignmentDetail.status !== 'open' || studentAssignmentBusy}
+                          onClick={() => {
+                            setStudentAssignmentText(studentAssignmentDetail.submission?.submission_text ?? '')
+                            setStudentAssignmentFiles([])
+                            setStudentAssignmentRetainedAttachments(studentAssignmentDetail.submission?.attachments ?? [])
+                            setStudentAssignmentEditMode(true)
+                          }}
+                        >
+                          수정
+                        </button>
+                        {studentAssignmentDetail.status !== 'open' ? (
+                          <span className="caption-text">진행 중인 과제만 제출하거나 수정할 수 있습니다.</span>
+                        ) : (
+                          <span className="caption-text">수정 버튼을 누른 뒤 제출 내용과 첨부 파일을 변경할 수 있습니다.</span>
+                        )}
+                      </div>
                     </div>
-                  </form>
+                  ) : (
+                    <form className="assignment-form" onSubmit={handleStudentAssignmentSubmit}>
+                      <label>
+                        제출 내용
+                        <textarea
+                          key={studentAssignmentEditMode ? 'assignment-edit' : 'assignment-create'}
+                          rows={8}
+                          value={studentAssignmentText}
+                          onChange={(event) => setStudentAssignmentText(event.target.value)}
+                          placeholder="교수님께 전달할 설명이나 작업 내용을 입력하세요."
+                          disabled={!canEditStudentAssignment || studentAssignmentBusy}
+                        />
+                      </label>
+                      <label>
+                        파일 첨부
+                        <input
+                          type="file"
+                          multiple
+                          onChange={(event) => setStudentAssignmentFiles(Array.from(event.target.files ?? []))}
+                          disabled={!canEditStudentAssignment || studentAssignmentBusy}
+                        />
+                      </label>
+                      {hasExistingSubmission ? (
+                        <div className="assignment-form-group">
+                          <strong>현재 첨부 파일</strong>
+                          {studentAssignmentRetainedAttachments.length ? (
+                            <div className="assignment-attachment-list">
+                              {studentAssignmentRetainedAttachments.map((attachment) => (
+                                <span key={attachment.id} className="assignment-attachment-chip assignment-attachment-chip--editable">
+                                  <span>{attachment.original_filename}</span>
+                                  <small>{formatFileSize(attachment.file_size_bytes)}</small>
+                                  <button
+                                    type="button"
+                                    className="assignment-attachment-remove"
+                                    aria-label={`${attachment.original_filename} 삭제`}
+                                    disabled={studentAssignmentBusy}
+                                    onClick={() => {
+                                      setStudentAssignmentRetainedAttachments((current) =>
+                                        current.filter((currentAttachment) => currentAttachment.id !== attachment.id),
+                                      )
+                                    }}
+                                  >
+                                    <span aria-hidden="true">×</span>
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="caption-text">남아 있는 기존 첨부 파일이 없습니다.</p>
+                          )}
+                        </div>
+                      ) : null}
+                      {studentAssignmentFiles.length > 0 ? (
+                        <div className="assignment-pending-files">
+                          {studentAssignmentFiles.map((file) => (
+                            <span key={`${file.name}-${file.size}-${file.lastModified}`} className="assignment-attachment-chip">
+                              <span>{file.name}</span>
+                              <small>{formatFileSize(file.size)}</small>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="exam-detail-actions">
+                        <button
+                          type="submit"
+                          className="primary-button"
+                          disabled={!canEditStudentAssignment || studentAssignmentBusy}
+                        >
+                          {studentAssignmentBusy ? studentAssignmentBusyLabel : studentAssignmentActionLabel}
+                        </button>
+                        {studentAssignmentDetail.status !== 'open' ? (
+                          <span className="caption-text">진행 중인 과제만 제출하거나 수정할 수 있습니다.</span>
+                        ) : (
+                          <span className="caption-text">기존 첨부는 x 버튼으로 제거할 수 있고, 새 파일은 함께 추가됩니다.</span>
+                        )}
+                      </div>
+                    </form>
+                  )}
                 </article>
               </div>
             </SectionCard>
@@ -5786,6 +5906,8 @@ function App() {
   }
 
   function renderQnaThread(thread: CourseQnaThread) {
+    const isClosedThread = thread.status === 'closed'
+
     return (
       <article key={thread.id} className="exam-list-card exam-list-card--student">
         <div className="exam-list-card-top">
@@ -5796,7 +5918,9 @@ function App() {
               {thread.student_name ?? thread.student_id ?? '학생'} · {formatBoardDate(thread.updated_at ?? thread.created_at)}
             </span>
           </div>
-          <span className="status-pill status-pill--live">{getQnaStatusLabel(thread.status)}</span>
+          <span className={`status-pill status-pill--${getQnaStatusTone(thread.status)}`}>
+            {getQnaStatusLabel(thread.status)}
+          </span>
         </div>
         {thread.posts?.length ? (
           <div className="helper-list">
@@ -5810,28 +5934,34 @@ function App() {
         ) : null}
         {isProfessor ? (
           <div className="stack-form">
-            <label>
-              답변 작성
-              <textarea
-                rows={3}
-                value={qnaAnswerDrafts[thread.id] ?? ''}
-                onChange={(event) => setQnaAnswerDrafts((current) => ({ ...current, [thread.id]: event.target.value }))}
-                placeholder="학생 문의에 대한 답변을 입력하세요."
-              />
-            </label>
-            <label className="inline-check">
-              <input
-                type="checkbox"
-                checked={qnaAnswerCloseDrafts[thread.id] ?? false}
-                onChange={(event) => setQnaAnswerCloseDrafts((current) => ({ ...current, [thread.id]: event.target.checked }))}
-              />
-              답변 후 문의 종료
-            </label>
-            <div className="exam-detail-actions">
-              <button type="button" className="primary-button" onClick={() => void handleProfessorQnaAnswer(thread.id)}>
-                답변 저장
-              </button>
-            </div>
+            {isClosedThread ? (
+              <p className="caption-text">종료된 문의입니다. 추가 답변은 등록할 수 없습니다.</p>
+            ) : (
+              <>
+                <label>
+                  답변 작성
+                  <textarea
+                    rows={3}
+                    value={qnaAnswerDrafts[thread.id] ?? ''}
+                    onChange={(event) => setQnaAnswerDrafts((current) => ({ ...current, [thread.id]: event.target.value }))}
+                    placeholder="학생 문의에 대한 답변을 입력하세요."
+                  />
+                </label>
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={qnaAnswerCloseDrafts[thread.id] ?? false}
+                    onChange={(event) => setQnaAnswerCloseDrafts((current) => ({ ...current, [thread.id]: event.target.checked }))}
+                  />
+                  <span>답변 후 문의 종료</span>
+                </label>
+                <div className="exam-detail-actions">
+                  <button type="button" className="primary-button" onClick={() => void handleProfessorQnaAnswer(thread.id)}>
+                    답변 저장
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         ) : null}
       </article>
