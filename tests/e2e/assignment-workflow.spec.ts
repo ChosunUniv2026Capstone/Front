@@ -58,8 +58,59 @@ const openAssignment = {
   attachment_count: 0,
 }
 
-async function mockStudentAssignmentApp(page: Parameters<typeof test>[0]['page']) {
+type StudentAssignmentDetailFixture = typeof openAssignment & {
+  submitted: boolean
+  submitted_at: string | null
+  attachment_count: number
+  submission: {
+    id: number
+    submission_text: string | null
+    submitted_at: string
+    updated_at: string
+    attachments: Array<{
+      id: number
+      original_filename: string
+      mime_type: string
+      file_size_bytes: number
+      uploaded_at: string
+    }>
+  } | null
+}
+
+const defaultSubmittedAssignmentDetail = {
+  ...openAssignment,
+  submitted: true,
+  submitted_at: '2026-03-03T15:30:00Z',
+  attachment_count: 1,
+  submission: {
+    id: 9001,
+    submission_text: '과제 제출 본문',
+    submitted_at: '2026-03-03T15:30:00Z',
+    updated_at: '2026-03-03T15:30:00Z',
+    attachments: [
+      {
+        id: 7001,
+        original_filename: 'report.txt',
+        mime_type: 'text/plain',
+        file_size_bytes: 11,
+        uploaded_at: '2026-03-03T15:30:00Z',
+      },
+    ],
+  },
+} satisfies StudentAssignmentDetailFixture
+
+async function mockStudentAssignmentApp(
+  page: Parameters<typeof test>[0]['page'],
+  options?: {
+    initialAssignment102Detail?: StudentAssignmentDetailFixture
+    submitResponse?: StudentAssignmentDetailFixture
+  },
+) {
   let submissionMultipartBody = ''
+  let assignment102Detail: StudentAssignmentDetailFixture = options?.initialAssignment102Detail ?? {
+    ...openAssignment,
+    submission: null,
+  }
 
   await page.addInitScript(() => {
     class MockWebSocket {
@@ -105,38 +156,29 @@ async function mockStudentAssignmentApp(page: Parameters<typeof test>[0]['page']
     await route.fulfill({ json: apiEnvelope([]) })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments', async (route) => {
-    await route.fulfill({ json: apiEnvelope([upcomingAssignment, openAssignment]) })
+    await route.fulfill({
+      json: apiEnvelope([
+        upcomingAssignment,
+        {
+          ...openAssignment,
+          submitted: assignment102Detail.submitted,
+          submitted_at: assignment102Detail.submitted_at,
+          attachment_count: assignment102Detail.attachment_count,
+        },
+      ]),
+    })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments/101', async (route) => {
     await route.fulfill({ json: apiEnvelope({ ...upcomingAssignment, submission: null }) })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments/102', async (route) => {
-    await route.fulfill({ json: apiEnvelope({ ...openAssignment, submission: null }) })
+    await route.fulfill({ json: apiEnvelope(assignment102Detail) })
   })
   await page.route('**/api/students/20201234/courses/CSE116/assignments/102/submission', async (route) => {
     submissionMultipartBody = route.request().postData() ?? ''
+    assignment102Detail = options?.submitResponse ?? defaultSubmittedAssignmentDetail
     await route.fulfill({
-      json: apiEnvelope({
-        ...openAssignment,
-        submitted: true,
-        submitted_at: '2026-03-03T15:30:00Z',
-        attachment_count: 1,
-        submission: {
-          id: 9001,
-          submission_text: '과제 제출 본문',
-          submitted_at: '2026-03-03T15:30:00Z',
-          updated_at: '2026-03-03T15:30:00Z',
-          attachments: [
-            {
-              id: 7001,
-              original_filename: 'report.txt',
-              mime_type: 'text/plain',
-              file_size_bytes: 11,
-              uploaded_at: '2026-03-03T15:30:00Z',
-            },
-          ],
-        },
-      }),
+      json: apiEnvelope(assignment102Detail),
     })
   })
 
@@ -168,4 +210,64 @@ test('student assignment UI blocks upcoming submissions and posts files under th
   await expect(page.getByText('과제를 제출했습니다.')).toBeVisible()
   expect(assignmentApp.getSubmissionMultipartBody()).toContain('name="files"')
   expect(assignmentApp.getSubmissionMultipartBody()).not.toContain('name="files[]"')
+})
+
+test('student assignment edit posts removed attachment ids and preserves retained files', async ({ page }) => {
+  const initialDetail = {
+    ...openAssignment,
+    submitted: true,
+    submitted_at: '2026-03-03T15:30:00Z',
+    attachment_count: 2,
+    submission: {
+      id: 9001,
+      submission_text: '기존 제출 본문',
+      submitted_at: '2026-03-03T15:30:00Z',
+      updated_at: '2026-03-03T15:30:00Z',
+      attachments: [
+        {
+          id: 7001,
+          original_filename: 'keep.txt',
+          mime_type: 'text/plain',
+          file_size_bytes: 4,
+          uploaded_at: '2026-03-03T15:30:00Z',
+        },
+        {
+          id: 7002,
+          original_filename: 'remove.txt',
+          mime_type: 'text/plain',
+          file_size_bytes: 6,
+          uploaded_at: '2026-03-03T15:30:00Z',
+        },
+      ],
+    },
+  } satisfies StudentAssignmentDetailFixture
+  const updatedDetail = {
+    ...initialDetail,
+    attachment_count: 1,
+    submission: {
+      ...initialDetail.submission,
+      submission_text: '수정된 제출 본문',
+      updated_at: '2026-03-03T15:45:00Z',
+      attachments: [initialDetail.submission.attachments[0]],
+    },
+  } satisfies StudentAssignmentDetailFixture
+  const assignmentApp = await mockStudentAssignmentApp(page, {
+    initialAssignment102Detail: initialDetail,
+    submitResponse: updatedDetail,
+  })
+
+  await page.goto('/courses/CSE116/assignments/102')
+
+  await expect(page.getByText('기존 제출 본문')).toBeVisible()
+  await page.getByRole('button', { name: '수정' }).click()
+  await expect(page.getByText('keep.txt').first()).toBeVisible()
+  await expect(page.getByText('remove.txt').first()).toBeVisible()
+  await page.getByRole('button', { name: 'remove.txt 삭제' }).click()
+  await page.getByLabel('제출 내용').fill('수정된 제출 본문')
+  await page.getByRole('button', { name: '저장' }).click()
+
+  await expect(page.getByText('과제를 수정했습니다.')).toBeVisible()
+  expect(assignmentApp.getSubmissionMultipartBody()).toContain('name="remove_attachment_ids"')
+  expect(assignmentApp.getSubmissionMultipartBody()).toContain('7002')
+  expect(assignmentApp.getSubmissionMultipartBody()).not.toContain('7001')
 })

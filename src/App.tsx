@@ -169,6 +169,12 @@ function getQnaStatusLabel(status?: string | null) {
   return status ? QNA_STATUS_LABEL[status] ?? status : '-'
 }
 
+function getQnaStatusTone(status?: string | null) {
+  if (status === 'closed') return 'closed'
+  if (status === 'answered') return 'completed'
+  return 'live'
+}
+
 function getLearningProgressStatusLabel(status?: string | null) {
   return status && status in LEARNING_PROGRESS_STATUS_LABEL
     ? LEARNING_PROGRESS_STATUS_LABEL[status as LearningProgressStatus]
@@ -1102,6 +1108,8 @@ function App() {
     setStudentAssignmentDetail(null)
     setStudentAssignmentText('')
     setStudentAssignmentFiles([])
+    setStudentAssignmentRetainedAttachments([])
+    setStudentAssignmentEditMode(false)
     setProfessorAssignments([])
     setProfessorAssignmentDetail(null)
     setSelectedProfessorAssignmentSubmissionId(null)
@@ -1236,6 +1244,8 @@ function App() {
     setStudentAssignmentDetail(null)
     setStudentAssignmentText('')
     setStudentAssignmentFiles([])
+    setStudentAssignmentRetainedAttachments([])
+    setStudentAssignmentEditMode(false)
     setProfessorAssignments([])
     setProfessorAssignmentDetail(null)
     setSelectedProfessorAssignmentSubmissionId(null)
@@ -2631,6 +2641,8 @@ function App() {
       setStudentAssignmentDetail(null)
       setStudentAssignmentText('')
       setStudentAssignmentFiles([])
+      setStudentAssignmentRetainedAttachments([])
+      setStudentAssignmentEditMode(false)
       setProfessorAssignments([])
       setProfessorAssignmentDetail(null)
       setSelectedProfessorAssignmentSubmissionId(null)
@@ -5852,7 +5864,9 @@ function App() {
               {thread.student_name ?? thread.student_id ?? '학생'} · {formatBoardDate(thread.updated_at ?? thread.created_at)}
             </span>
           </div>
-          <span className="status-pill status-pill--live">{getQnaStatusLabel(thread.status)}</span>
+          <span className={`status-pill status-pill--${getQnaStatusTone(thread.status)}`}>
+            {getQnaStatusLabel(thread.status)}
+          </span>
         </div>
         {thread.posts?.length ? (
           <div className="helper-list">
