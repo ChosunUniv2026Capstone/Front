@@ -972,12 +972,16 @@ export const api = {
     assignmentId: number,
     payload: {
       submission_text?: string | null
+      remove_attachment_ids?: number[]
       files?: File[]
     },
   ) => {
     const formData = new FormData()
     if (payload.submission_text != null) {
       formData.append('submission_text', payload.submission_text)
+    }
+    for (const attachmentId of payload.remove_attachment_ids ?? []) {
+      formData.append('remove_attachment_ids', String(attachmentId))
     }
     for (const file of payload.files ?? []) {
       formData.append('files', file)

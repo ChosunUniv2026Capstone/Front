@@ -377,10 +377,12 @@ button:disabled {
   align-items: center;
   justify-content: center;
   width: fit-content;
+  flex-shrink: 0;
   padding: 5px 9px;
   border-radius: 999px;
   font-size: 0.68rem;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .info-chip,
@@ -543,6 +545,31 @@ button:disabled {
   color: var(--text);
 }
 
+.metric-card--overview {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 92px;
+  padding: 16px 14px;
+}
+
+.metric-card--overview span {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.metric-card--overview strong {
+  margin-bottom: 0;
+  font-size: 1.16rem;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
 .metric-card--accent {
   border-color: #cfe0fd;
   background: linear-gradient(180deg, #f2f7ff 0%, #e8f1ff 100%);
@@ -550,7 +577,7 @@ button:disabled {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 340px);
   gap: 18px;
 }
 
@@ -1809,6 +1836,57 @@ code {
 
 .summary-list > div:last-child {
   border-right: 0;
+}
+
+.summary-list--overview > div {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 88px;
+  padding: 16px 14px;
+}
+
+.summary-list--overview > div span {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.summary-list--overview > div strong {
+  margin-bottom: 0;
+  font-size: 1.14rem;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+}
+
+.summary-list--profile > div {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 96px;
+  padding: 16px 14px;
+}
+
+.summary-list--profile > div span {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  word-break: keep-all;
+  letter-spacing: -0.01em;
+}
+
+.summary-list--profile > div strong {
+  margin-bottom: 0;
+  font-size: 1.16rem;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
 }
 
 .helper-row,
@@ -3112,7 +3190,14 @@ code,
 }
 
 .exam-list-card-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
+}
+
+.exam-list-card-top .status-pill {
+  align-self: start;
+  min-width: max-content;
 }
 
 .exam-card-copy {
@@ -3124,6 +3209,14 @@ code,
 .exam-card-copy h4,
 .exam-card-copy p {
   margin: 0;
+}
+
+.exam-card-copy strong,
+.exam-card-copy h4,
+.exam-card-copy p,
+.exam-fact-card strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .exam-card-copy p {
@@ -3345,6 +3438,28 @@ code,
   margin: 0;
 }
 
+.inline-check {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-start;
+  width: fit-content;
+  grid-template-columns: none;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.inline-check input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.inline-check span {
+  color: var(--text);
+  line-height: 1.3;
+}
+
 .exam-builder-card > .field-grid:first-of-type {
   grid-template-columns: minmax(0, 220px);
 }
@@ -3494,9 +3609,14 @@ code,
   align-items: flex-start;
 }
 
-.assignment-meta-grid .exam-fact-card span,
-.assignment-body-panel strong {
+.assignment-meta-grid .exam-fact-card span {
   white-space: nowrap;
+}
+
+.assignment-body-panel strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .assignment-body-panel {
@@ -3532,6 +3652,41 @@ code,
 
 .assignment-attachment-chip small {
   color: var(--text-soft);
+}
+
+.assignment-attachment-chip--editable {
+  padding-right: 8px;
+}
+
+.assignment-form-group {
+  display: grid;
+  gap: 10px;
+}
+
+.assignment-attachment-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(29, 95, 208, 0.14);
+  color: var(--primary-strong);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.assignment-attachment-remove:hover:not(:disabled) {
+  background: rgba(29, 95, 208, 0.22);
+}
+
+.assignment-attachment-remove:disabled {
+  cursor: default;
 }
 
 .exam-submission-item-head,
