@@ -94,6 +94,20 @@ type ProfessorAssignmentDraft = {
   dueAt: string
 }
 
+type DashboardAssignment = {
+  id: number
+  courseCode: string
+  courseTitle: string
+  title: string
+  dueAt: string
+  status: StudentAssignmentSummary['status'] | ProfessorAssignmentSummary['status']
+  submitted?: boolean
+  submittedAt?: string | null
+  gradingStatus?: AssignmentGradingStatus | string | null
+  submissionCount?: number
+  totalStudents?: number
+}
+
 const ROLE_LABEL: Record<LoginUser['role'], string> = {
   student: '학생',
   professor: '교수',
@@ -392,6 +406,49 @@ function formatExamDateTime(value?: string | null) {
   return `${year}-${month}-${day} ${hours}:${minutes}`
 }
 
+function formatCalendarMonth(value: Date) {
+  return `${value.getFullYear()}.${String(value.getMonth() + 1).padStart(2, '0')}`
+}
+
+function toDateKey(value: string | Date) {
+  const parsed = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatKoreanDate(value: Date) {
+  return `${value.getFullYear()}.${String(value.getMonth() + 1).padStart(2, '0')}.${String(value.getDate()).padStart(2, '0')}`
+}
+
+function formatKoreanDateTime(value?: string | null) {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  const period = parsed.getHours() < 12 ? '오전' : '오후'
+  const hour = parsed.getHours() % 12 || 12
+  const minute = String(parsed.getMinutes()).padStart(2, '0')
+  return `${formatKoreanDate(parsed)} ${period} ${hour}:${minute}`
+}
+
+function getCalendarMonthCells(month: Date) {
+  const year = month.getFullYear()
+  const monthIndex = month.getMonth()
+  const firstDay = new Date(year, monthIndex, 1)
+  const start = new Date(year, monthIndex, 1 - firstDay.getDay())
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start)
+    date.setDate(start.getDate() + index)
+    return {
+      date,
+      key: toDateKey(date),
+      inMonth: date.getMonth() === monthIndex,
+    }
+  })
+}
+
 function formatExamWindow(startsAt?: string | null, endsAt?: string | null) {
   if (!startsAt || !endsAt) return '-'
   const start = new Date(startsAt)
@@ -658,6 +715,17 @@ function App() {
   const [studentAssignmentRetainedAttachments, setStudentAssignmentRetainedAttachments] = useState<AssignmentAttachment[]>([])
   const [studentAssignmentEditMode, setStudentAssignmentEditMode] = useState(false)
   const [professorAssignments, setProfessorAssignments] = useState<ProfessorAssignmentSummary[]>([])
+  const [dashboardAssignments, setDashboardAssignments] = useState<DashboardAssignment[]>([])
+  const [dashboardAssignmentsLoading, setDashboardAssignmentsLoading] = useState(false)
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth(), 1)
+  })
+  const [loginCalendarMonth, setLoginCalendarMonth] = useState(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth(), 1)
+  })
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => toDateKey(new Date()))
   const [professorAssignmentDetail, setProfessorAssignmentDetail] = useState<ProfessorAssignmentDetail | null>(null)
   const [selectedProfessorAssignmentSubmissionId, setSelectedProfessorAssignmentSubmissionId] = useState<number | null>(null)
   const [professorAssignmentDraft, setProfessorAssignmentDraft] = useState<ProfessorAssignmentDraft>(() => createDefaultProfessorAssignmentDraft())
@@ -1112,6 +1180,8 @@ function App() {
     setStudentAssignmentRetainedAttachments([])
     setStudentAssignmentEditMode(false)
     setProfessorAssignments([])
+    setDashboardAssignments([])
+    setDashboardAssignmentsLoading(false)
     setProfessorAssignmentDetail(null)
     setSelectedProfessorAssignmentSubmissionId(null)
     setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
@@ -1732,6 +1802,75 @@ function App() {
     const nextAssignments = await api.listProfessorAssignments(currentUser.login_id, courseCode)
     setProfessorAssignments(nextAssignments)
   }
+
+  useEffect(() => {
+    if (!currentUser || isAdmin || courses.length === 0) {
+      setDashboardAssignments([])
+      return
+    }
+
+    let cancelled = false
+
+    ;(async () => {
+      setDashboardAssignmentsLoading(true)
+      try {
+        const assignmentGroups = await Promise.all(
+          courses.map(async (course) => {
+            if (currentUser.role === 'student') {
+              const assignments = await api.listStudentAssignments(currentUser.login_id, course.course_code)
+              return assignments.map<DashboardAssignment>((assignment) => ({
+                id: assignment.id,
+                courseCode: course.course_code,
+                courseTitle: course.title,
+                title: assignment.title,
+                dueAt: assignment.due_at,
+                status: assignment.status,
+                submitted: assignment.submitted,
+                submittedAt: assignment.submitted_at,
+                gradingStatus: assignment.grading_status,
+              }))
+            }
+
+            if (currentUser.role === 'professor') {
+              const assignments = await api.listProfessorAssignments(currentUser.login_id, course.course_code)
+              return assignments.map<DashboardAssignment>((assignment) => ({
+                id: assignment.id,
+                courseCode: course.course_code,
+                courseTitle: course.title,
+                title: assignment.title,
+                dueAt: assignment.due_at,
+                status: assignment.status,
+                submissionCount: assignment.submission_count,
+                totalStudents: assignment.total_students,
+              }))
+            }
+
+            return []
+          }),
+        )
+
+        if (!cancelled) {
+          setDashboardAssignments(
+            assignmentGroups
+              .flat()
+              .sort((left, right) => new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime()),
+          )
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setError(caughtError instanceof Error ? caughtError.message : '대시보드 과제 일정을 불러오지 못했습니다.')
+        }
+      } finally {
+        if (!cancelled) {
+          setDashboardAssignmentsLoading(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [courses, currentUser, isAdmin])
 
   const openStudentAssignmentDetail = useCallback(async (assignmentId: number) => {
     if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
@@ -2871,6 +3010,12 @@ function App() {
   }, [isProfessor, isStudent])
 
   function renderLoginPage() {
+    const loginCalendarCells = getCalendarMonthCells(loginCalendarMonth)
+    const todayKey = toDateKey(new Date())
+    const moveLoginCalendarMonth = (offset: number) => {
+      setLoginCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1))
+    }
+
     return (
       <main className="auth-page">
         <ul className="skip-links">
@@ -2882,14 +3027,53 @@ function App() {
         <section className="auth-layout">
           <div className="auth-copy">
             <p className="eyebrow">조선대학교 차세대 사이버캠퍼스</p>
-            <h1>학습과 수업 관리를 위한 통합 학습지원 시스템</h1>
+            <h1>
+              <span>학습과 수업 관리를 위한</span>
+              <span>학습지원 시스템</span>
+            </h1>
             <p className="auth-description">
-              강의 정보, 공지, 개인 단말 관리, 출석·시험 확인 기능을 하나의 화면 흐름으로 사용할 수
-              있도록 정리한 캠퍼스 포털입니다.
+              강의 공지, 과제 마감, 출석, 시험 일정을 역할별 대시보드에서 한눈에 확인할 수 있습니다.
             </p>
             <div className="auth-badges">
               <span className={`status-pill status-pill--${health}`}>시스템 {HEALTH_LABEL[health]}</span>
-              <span className="info-chip">학생 · 교수 · 관리자 공통 이용</span>
+              <span className="info-chip">학생 · 교수 · 관리자</span>
+              <span className="info-chip">통합 학습지원</span>
+            </div>
+            <div className="auth-feature-list" aria-label="주요 기능">
+              <span>공지</span>
+              <span>과제</span>
+              <span>출석</span>
+              <span>시험</span>
+            </div>
+            <div className="auth-mini-calendar" aria-label="이번 달 일정 달력">
+              <div className="auth-mini-calendar-head">
+                <button type="button" className="auth-mini-calendar-nav" onClick={() => moveLoginCalendarMonth(-1)} aria-label="이전 달">
+                  ‹
+                </button>
+                <strong>{formatCalendarMonth(loginCalendarMonth)}</strong>
+                <button type="button" className="auth-mini-calendar-nav" onClick={() => moveLoginCalendarMonth(1)} aria-label="다음 달">
+                  ›
+                </button>
+              </div>
+              <div className="auth-mini-weekdays" aria-hidden="true">
+                {['일', '월', '화', '수', '목', '금', '토'].map((weekday) => (
+                  <span key={weekday}>{weekday}</span>
+                ))}
+              </div>
+              <div className="auth-mini-calendar-grid">
+                {loginCalendarCells.map((cell) => (
+                  <span
+                    key={cell.key}
+                    className={[
+                      'auth-mini-day',
+                      cell.inMonth ? '' : 'is-muted',
+                      cell.key === todayKey ? 'is-today' : '',
+                    ].filter(Boolean).join(' ')}
+                  >
+                    {cell.date.getDate()}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -2897,7 +3081,7 @@ function App() {
             <article className="section-card auth-card">
               <header className="section-head">
                 <h3>로그인</h3>
-                <span className="caption-text">사용자 계정으로 접속</span>
+                <span className="caption-text">학번 또는 교번으로 접속</span>
               </header>
               <form id="login-form" className="stack" onSubmit={handleLogin}>
                 <label>
@@ -2926,7 +3110,7 @@ function App() {
 
             <article className="section-card auth-card auth-card--muted">
               <header className="section-head">
-                <h3>샘플 계정 안내</h3>
+                <h3>시연 계정</h3>
                 <span className="caption-text">시연 및 점검용</span>
               </header>
               <div className="helper-list">
@@ -3320,6 +3504,155 @@ function App() {
     )
   }
 
+  function renderAssignmentCalendar() {
+    const calendarCells = getCalendarMonthCells(calendarMonth)
+    const todayKey = toDateKey(new Date())
+    const selectedDate = selectedCalendarDate ? new Date(`${selectedCalendarDate}T00:00:00`) : new Date()
+    const assignmentsByDate = dashboardAssignments.reduce<Record<string, DashboardAssignment[]>>((grouped, assignment) => {
+      const dateKey = toDateKey(assignment.dueAt)
+      if (!dateKey) return grouped
+      if (!grouped[dateKey]) grouped[dateKey] = []
+      grouped[dateKey].push(assignment)
+      return grouped
+    }, {})
+    const selectedAssignments = assignmentsByDate[selectedCalendarDate] ?? []
+
+    const moveCalendarMonth = (offset: number) => {
+      const nextMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + offset, 1)
+      const selectedDay = Number.isNaN(selectedDate.getTime()) ? 1 : selectedDate.getDate()
+      const lastDayOfNextMonth = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate()
+      setCalendarMonth(nextMonth)
+      setSelectedCalendarDate(toDateKey(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(selectedDay, lastDayOfNextMonth))))
+    }
+
+    const openAssignment = (assignment: DashboardAssignment) => {
+      navigate({
+        kind: 'course',
+        courseCode: assignment.courseCode,
+        section: 'assignments',
+        assignmentId: assignment.id,
+      })
+    }
+
+    const selectCalendarDate = (date: Date, key: string) => {
+      setSelectedCalendarDate(key)
+      setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1))
+    }
+
+    return (
+      <SectionCard title="일정" action={<span className="info-chip">과제 마감 {dashboardAssignments.length}건</span>}>
+        <div className="assignment-calendar">
+          <div className="assignment-calendar-side">
+            <div className="calendar-month-controls" aria-label="월 이동">
+              <button type="button" className="calendar-nav-button" onClick={() => moveCalendarMonth(-1)} aria-label="이전 달">
+                ‹
+              </button>
+              <strong>{formatCalendarMonth(calendarMonth)}</strong>
+              <button type="button" className="calendar-nav-button" onClick={() => moveCalendarMonth(1)} aria-label="다음 달">
+                ›
+              </button>
+            </div>
+
+            <div className="calendar-selected-date">
+              <strong>{Number.isNaN(selectedDate.getTime()) ? '-' : selectedDate.getDate()}</strong>
+              <span>
+                {Number.isNaN(selectedDate.getTime())
+                  ? '날짜를 선택하세요'
+                  : selectedDate.toLocaleDateString('ko-KR', { weekday: 'long' })}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                const today = new Date()
+                setCalendarMonth(new Date(today.getFullYear(), today.getMonth(), 1))
+                setSelectedCalendarDate(toDateKey(today))
+              }}
+            >
+              오늘
+            </button>
+          </div>
+
+          <div className="assignment-calendar-main">
+            <div className="calendar-weekdays" aria-hidden="true">
+              {['일', '월', '화', '수', '목', '금', '토'].map((weekday) => (
+                <span key={weekday}>{weekday}</span>
+              ))}
+            </div>
+            <div className="calendar-grid">
+              {calendarCells.map((cell) => {
+                const dayAssignments = assignmentsByDate[cell.key] ?? []
+                const isSelected = cell.key === selectedCalendarDate
+                const isToday = cell.key === todayKey
+                return (
+                  <button
+                    key={cell.key}
+                    type="button"
+                    className={[
+                      'calendar-day',
+                      cell.inMonth ? '' : 'is-muted',
+                      isSelected ? 'is-selected' : '',
+                      isToday ? 'is-today' : '',
+                    ].filter(Boolean).join(' ')}
+                    onClick={() => selectCalendarDate(cell.date, cell.key)}
+                  >
+                    <span>{cell.date.getDate()}</span>
+                    {dayAssignments.length > 0 ? <i aria-label={`${dayAssignments.length}개 과제 마감`} /> : null}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="assignment-calendar-detail">
+          {dashboardAssignmentsLoading ? <p className="empty-state">과제 일정을 불러오는 중입니다.</p> : null}
+          {!dashboardAssignmentsLoading && selectedAssignments.length === 0 ? (
+            <p className="empty-state">선택한 날짜에 마감되는 과제가 없습니다.</p>
+          ) : null}
+          {selectedAssignments.length > 0 ? (
+            <div className="assignment-due-list">
+              {selectedAssignments.map((assignment) => {
+                const statusMeta = getAssignmentStatusMeta(assignment.status)
+                const submissionLabel = isStudent
+                  ? assignment.submitted
+                    ? assignment.gradingStatus
+                      ? getGradingStatusLabel(assignment.gradingStatus)
+                      : '제출 완료'
+                    : '미제출'
+                  : `${assignment.submissionCount ?? 0}/${assignment.totalStudents ?? 0}명 제출`
+                return (
+                  <button
+                    key={`${assignment.courseCode}-${assignment.id}`}
+                    type="button"
+                    className="assignment-due-card"
+                    onClick={() => openAssignment(assignment)}
+                  >
+                    <span className="calendar-event-dot" aria-hidden="true" />
+                    <div>
+                      <strong>[과제] {assignment.title}</strong>
+                      <p>{assignment.courseTitle} ({assignment.courseCode})</p>
+                      <p>마감일 : {formatKoreanDateTime(assignment.dueAt)}</p>
+                      <p>
+                        상태 :{' '}
+                        <span className={assignment.submitted === false ? 'assignment-submit-state is-missing' : 'assignment-submit-state'}>
+                          {submissionLabel}
+                        </span>
+                      </p>
+                    </div>
+                    <span className={`status-pill status-pill--${statusMeta.tone}`}>{statusMeta.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+        </div>
+      </SectionCard>
+    )
+  }
+
   function renderDashboard() {
     if (isAdmin) {
       const selectedNetworks = selectedAdminSnapshot?.classroomNetworks ?? []
@@ -3517,6 +3850,8 @@ function App() {
     return (
       <section className="content-grid">
         <div className="main-column">
+          {renderAssignmentCalendar()}
+
           <SectionCard title="공지사항" action={<span className="info-chip">최근 {recentNotices.length}건</span>}>
             {renderNoticeItems(recentNotices)}
           </SectionCard>
