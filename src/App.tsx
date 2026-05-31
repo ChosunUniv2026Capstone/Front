@@ -717,6 +717,7 @@ function App() {
   const [professorAssignments, setProfessorAssignments] = useState<ProfessorAssignmentSummary[]>([])
   const [dashboardAssignments, setDashboardAssignments] = useState<DashboardAssignment[]>([])
   const [dashboardAssignmentsLoading, setDashboardAssignmentsLoading] = useState(false)
+  const [dashboardAssignmentsError, setDashboardAssignmentsError] = useState<string | null>(null)
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date()
     return new Date(today.getFullYear(), today.getMonth(), 1)
@@ -1182,6 +1183,7 @@ function App() {
     setProfessorAssignments([])
     setDashboardAssignments([])
     setDashboardAssignmentsLoading(false)
+    setDashboardAssignmentsError(null)
     setProfessorAssignmentDetail(null)
     setSelectedProfessorAssignmentSubmissionId(null)
     setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
@@ -1806,6 +1808,7 @@ function App() {
   useEffect(() => {
     if (!currentUser || isAdmin || courses.length === 0) {
       setDashboardAssignments([])
+      setDashboardAssignmentsError(null)
       return
     }
 
@@ -1813,6 +1816,7 @@ function App() {
 
     ;(async () => {
       setDashboardAssignmentsLoading(true)
+      setDashboardAssignmentsError(null)
       try {
         const assignmentGroups = await Promise.all(
           courses.map(async (course) => {
@@ -1856,9 +1860,10 @@ function App() {
               .sort((left, right) => new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime()),
           )
         }
-      } catch (caughtError) {
+      } catch {
         if (!cancelled) {
-          setError(caughtError instanceof Error ? caughtError.message : '대시보드 과제 일정을 불러오지 못했습니다.')
+          setDashboardAssignments([])
+          setDashboardAssignmentsError('대시보드 과제 일정을 불러오지 못했습니다.')
         }
       } finally {
         if (!cancelled) {
@@ -3609,7 +3614,10 @@ function App() {
 
         <div className="assignment-calendar-detail">
           {dashboardAssignmentsLoading ? <p className="empty-state">과제 일정을 불러오는 중입니다.</p> : null}
-          {!dashboardAssignmentsLoading && selectedAssignments.length === 0 ? (
+          {!dashboardAssignmentsLoading && dashboardAssignmentsError ? (
+            <p className="empty-state">{dashboardAssignmentsError}</p>
+          ) : null}
+          {!dashboardAssignmentsLoading && !dashboardAssignmentsError && selectedAssignments.length === 0 ? (
             <p className="empty-state">선택한 날짜에 마감되는 과제가 없습니다.</p>
           ) : null}
           {selectedAssignments.length > 0 ? (
