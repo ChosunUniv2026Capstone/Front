@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.2](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.6.1...smart-class-front-v0.6.2) (2026-05-31)
+
+
+### Bug Fixes
+
+* keep dashboard assignment calendar current under partial failure
+* scope login auth refinements to login markup
+* show assignment deadline feedback without hiding route status
+
 ## [0.6.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.6.0...smart-class-front-v0.6.1) (2026-05-22)
 
 
