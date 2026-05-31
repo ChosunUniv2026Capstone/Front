@@ -935,7 +935,6 @@ test('professor dashboard exposes per-student attendance stats table', async ({ 
   await mockProfessorApp(page)
 
   await page.goto('/courses/CSE116/attendance')
-  await page.getByRole('button', { name: '학생별 통계' }).click()
 
   await expect(page.getByText('학생별 출석 누계')).toBeVisible()
   await expect(page.locator('.attendance-stats-table')).toBeVisible()
