@@ -108,6 +108,11 @@ type DashboardAssignment = {
   totalStudents?: number
 }
 
+type DashboardAssignmentSnapshot = {
+  assignments: DashboardAssignment[]
+  failedCourseCount: number
+}
+
 const ROLE_LABEL: Record<LoginUser['role'], string> = {
   student: '학생',
   professor: '교수',
@@ -178,6 +183,17 @@ function getAssignmentStatusMeta(status: StudentAssignmentSummary['status'] | Pr
 
 function getGradingStatusLabel(status?: string | null) {
   return status && status in GRADING_STATUS_LABEL ? GRADING_STATUS_LABEL[status as AssignmentGradingStatus] : '미채점'
+}
+
+function getDashboardAssignmentsLoadError(failedCourseCount: number) {
+  if (failedCourseCount === 0) return null
+  return failedCourseCount === 1
+    ? '일부 강의의 과제 일정을 불러오지 못했습니다.'
+    : `일부 강의(${failedCourseCount}개)의 과제 일정을 불러오지 못했습니다.`
+}
+
+function sortDashboardAssignments(assignments: DashboardAssignment[]) {
+  return assignments.sort((left, right) => new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime())
 }
 
 function getQnaStatusLabel(status?: string | null) {
@@ -1805,6 +1821,76 @@ function App() {
     setProfessorAssignments(nextAssignments)
   }
 
+  const loadDashboardAssignmentSnapshot = useCallback(async (): Promise<DashboardAssignmentSnapshot> => {
+    const user = currentUser
+    if (!user || isAdmin || courses.length === 0) {
+      return { assignments: [], failedCourseCount: 0 }
+    }
+
+    const assignmentGroups = await Promise.allSettled(
+      courses.map(async (course) => {
+        if (user.role === 'student') {
+          const assignments = await api.listStudentAssignments(user.login_id, course.course_code)
+          return assignments.map<DashboardAssignment>((assignment) => ({
+            id: assignment.id,
+            courseCode: course.course_code,
+            courseTitle: course.title,
+            title: assignment.title,
+            dueAt: assignment.due_at,
+            status: assignment.status,
+            submitted: assignment.submitted,
+            submittedAt: assignment.submitted_at,
+            gradingStatus: assignment.grading_status,
+          }))
+        }
+
+        if (user.role === 'professor') {
+          const assignments = await api.listProfessorAssignments(user.login_id, course.course_code)
+          return assignments.map<DashboardAssignment>((assignment) => ({
+            id: assignment.id,
+            courseCode: course.course_code,
+            courseTitle: course.title,
+            title: assignment.title,
+            dueAt: assignment.due_at,
+            status: assignment.status,
+            submissionCount: assignment.submission_count,
+            totalStudents: assignment.total_students,
+          }))
+        }
+
+        return []
+      }),
+    )
+
+    const assignments = assignmentGroups.flatMap((result) => result.status === 'fulfilled' ? result.value : [])
+    const failedCourseCount = assignmentGroups.filter((result) => result.status === 'rejected').length
+    return {
+      assignments: sortDashboardAssignments(assignments),
+      failedCourseCount,
+    }
+  }, [courses, currentUser, isAdmin])
+
+  const applyDashboardAssignmentSnapshot = useCallback((snapshot: DashboardAssignmentSnapshot) => {
+    setDashboardAssignments(snapshot.assignments)
+    setDashboardAssignmentsError(getDashboardAssignmentsLoadError(snapshot.failedCourseCount))
+  }, [])
+
+  const refreshDashboardAssignments = useCallback(async () => {
+    if (!currentUser || isAdmin || courses.length === 0) {
+      setDashboardAssignments([])
+      setDashboardAssignmentsError(null)
+      return
+    }
+
+    try {
+      const snapshot = await loadDashboardAssignmentSnapshot()
+      applyDashboardAssignmentSnapshot(snapshot)
+    } catch {
+      setDashboardAssignments([])
+      setDashboardAssignmentsError('대시보드 과제 일정을 불러오지 못했습니다.')
+    }
+  }, [applyDashboardAssignmentSnapshot, courses.length, currentUser, isAdmin, loadDashboardAssignmentSnapshot])
+
   useEffect(() => {
     if (!currentUser || isAdmin || courses.length === 0) {
       setDashboardAssignments([])
@@ -1818,47 +1904,9 @@ function App() {
       setDashboardAssignmentsLoading(true)
       setDashboardAssignmentsError(null)
       try {
-        const assignmentGroups = await Promise.all(
-          courses.map(async (course) => {
-            if (currentUser.role === 'student') {
-              const assignments = await api.listStudentAssignments(currentUser.login_id, course.course_code)
-              return assignments.map<DashboardAssignment>((assignment) => ({
-                id: assignment.id,
-                courseCode: course.course_code,
-                courseTitle: course.title,
-                title: assignment.title,
-                dueAt: assignment.due_at,
-                status: assignment.status,
-                submitted: assignment.submitted,
-                submittedAt: assignment.submitted_at,
-                gradingStatus: assignment.grading_status,
-              }))
-            }
-
-            if (currentUser.role === 'professor') {
-              const assignments = await api.listProfessorAssignments(currentUser.login_id, course.course_code)
-              return assignments.map<DashboardAssignment>((assignment) => ({
-                id: assignment.id,
-                courseCode: course.course_code,
-                courseTitle: course.title,
-                title: assignment.title,
-                dueAt: assignment.due_at,
-                status: assignment.status,
-                submissionCount: assignment.submission_count,
-                totalStudents: assignment.total_students,
-              }))
-            }
-
-            return []
-          }),
-        )
-
+        const snapshot = await loadDashboardAssignmentSnapshot()
         if (!cancelled) {
-          setDashboardAssignments(
-            assignmentGroups
-              .flat()
-              .sort((left, right) => new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime()),
-          )
+          applyDashboardAssignmentSnapshot(snapshot)
         }
       } catch {
         if (!cancelled) {
@@ -1875,7 +1923,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [courses, currentUser, isAdmin])
+  }, [applyDashboardAssignmentSnapshot, courses.length, currentUser, isAdmin, loadDashboardAssignmentSnapshot])
 
   const openStudentAssignmentDetail = useCallback(async (assignmentId: number) => {
     if (!currentUser || currentUser.role !== 'student' || !selectedCourse) return
@@ -1940,6 +1988,7 @@ function App() {
       setProfessorAssignmentDraft(createDefaultProfessorAssignmentDraft())
       setAssignmentMessage('과제를 등록했습니다.')
       await loadProfessorAssignmentList(selectedCourse.course_code)
+      await refreshDashboardAssignments()
       navigate({
         kind: 'course',
         courseCode: selectedCourse.course_code,
@@ -1988,6 +2037,7 @@ function App() {
       setStudentAssignmentEditMode(false)
       setAssignmentMessage(hadExistingSubmission ? '과제를 수정했습니다.' : '과제를 제출했습니다.')
       await loadStudentAssignmentList(selectedCourse.course_code)
+      await refreshDashboardAssignments()
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '과제를 제출하지 못했습니다.')
     } finally {
@@ -2734,6 +2784,7 @@ function App() {
       }
       setAssignmentMessage('채점 결과를 저장했습니다.')
       await loadProfessorAssignmentList(selectedCourse.course_code)
+      await refreshDashboardAssignments()
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '채점 결과를 저장하지 못했습니다.')
     } finally {

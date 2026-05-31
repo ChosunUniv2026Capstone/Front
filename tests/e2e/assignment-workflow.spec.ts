@@ -187,6 +187,98 @@ async function mockStudentAssignmentApp(
   }
 }
 
+function getLocalDateKey() {
+  const today = new Date()
+  return [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
+test('dashboard assignment calendar keeps loaded courses visible when another course fails', async ({ page }) => {
+  const todayDueAt = `${getLocalDateKey()}T23:59:00`
+
+  await page.addInitScript(() => {
+    class MockWebSocket {
+      url
+      readyState = 1
+      onopen = null
+      onmessage = null
+      onerror = null
+      onclose = null
+
+      constructor(url: string) {
+        this.url = url
+        setTimeout(() => {
+          this.onopen?.(new Event('open'))
+        }, 0)
+      }
+
+      send() {}
+
+      close() {
+        this.readyState = 3
+        this.onclose?.(new Event('close'))
+      }
+    }
+
+    // @ts-expect-error browser override for test isolation
+    window.WebSocket = MockWebSocket
+  })
+
+  await page.route('**/health', async (route) => {
+    await route.fulfill({ json: { status: 'ok' } })
+  })
+  await page.route('**/api/auth/bootstrap', async (route) => {
+    await route.fulfill({ json: apiEnvelope(studentSession) })
+  })
+  await page.route('**/api/auth/me', async (route) => {
+    await route.fulfill({ json: apiEnvelope(studentSession) })
+  })
+  await page.route('**/api/students/20201234/courses', async (route) => {
+    await route.fulfill({
+      json: apiEnvelope([
+        studentCourses[0],
+        {
+          id: 2,
+          course_code: 'CSE220',
+          title: 'Data Structures',
+          professor_name: 'Park Professor',
+          classroom_code: 'B201',
+        },
+      ]),
+    })
+  })
+  await page.route('**/api/notices/20201234', async (route) => {
+    await route.fulfill({ json: apiEnvelope([]) })
+  })
+  await page.route('**/api/students/20201234/devices', async (route) => {
+    await route.fulfill({ json: apiEnvelope([]) })
+  })
+  await page.route('**/api/students/20201234/courses/CSE116/assignments', async (route) => {
+    await route.fulfill({
+      json: apiEnvelope([
+        {
+          ...openAssignment,
+          id: 301,
+          title: 'Dashboard Visible Assignment',
+          due_at: todayDueAt,
+        },
+      ]),
+    })
+  })
+  await page.route('**/api/students/20201234/courses/CSE220/assignments', async (route) => {
+    await route.fulfill({ status: 503, json: apiEnvelope({ message: 'temporarily unavailable' }) })
+  })
+
+  await page.goto('/dashboard')
+
+  await expect(page.getByText(/과제 마감 1건/)).toBeVisible()
+  await expect(page.getByText(/일부 강의.*과제 일정/)).toBeVisible()
+  await expect(page.getByText('Dashboard Visible Assignment')).toBeVisible()
+})
+
 test('student assignment UI blocks upcoming submissions and posts files under the backend contract field', async ({ page }) => {
   const assignmentApp = await mockStudentAssignmentApp(page)
 
