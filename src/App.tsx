@@ -3073,15 +3073,15 @@ function App() {
     }
 
     return (
-      <main className="auth-page">
+      <main className="auth-page auth-page--login">
         <ul className="skip-links">
           <li>
             <a href="#login-form">로그인 바로가기</a>
           </li>
         </ul>
 
-        <section className="auth-layout">
-          <div className="auth-copy">
+        <section className="auth-layout auth-layout--login">
+          <div className="auth-copy auth-copy--login">
             <p className="eyebrow">조선대학교 차세대 사이버캠퍼스</p>
             <h1>
               <span>학습과 수업 관리를 위한</span>
@@ -3133,7 +3133,7 @@ function App() {
             </div>
           </div>
 
-          <div className="auth-panels">
+          <div className="auth-panels auth-panels--login">
             <article className="section-card auth-card">
               <header className="section-head">
                 <h3>로그인</h3>
