@@ -366,11 +366,98 @@ function isApOfflineAttendanceSession(session: StudentAttendanceSession) {
   return perSlot.length > 0 && perSlot.every((item) => item.eligibility.reason_code === 'AP_OFFLINE')
 }
 
+function isContinuousAttendancePolicy(policy?: string | null) {
+  return policy === 'continuous_presence_v1'
+}
+
 function getStudentCheckInButtonText(session: StudentAttendanceSession, submittingSessionId: number | null) {
   if (submittingSessionId === session.session_id) return '처리 중...'
   if (session.can_check_in) return '출석하기'
   if (isApOfflineAttendanceSession(session)) return 'AP 연결 끊김'
   return '출석 불가'
+}
+
+function getAttendanceStatusLabel(status?: string | null) {
+  switch (status) {
+    case 'present':
+      return '출석'
+    case 'late':
+      return '지각'
+    case 'absent':
+      return '결석'
+    case 'official':
+      return '공결'
+    case 'sick':
+      return '병가'
+    case 'pending':
+      return '진행 중'
+    default:
+      return '미확정'
+  }
+}
+
+function getPresenceStateLabel(state?: string | null) {
+  switch (state) {
+    case 'outside_time':
+      return '출석 외 시간'
+    case 'present':
+      return '출석 중 재실'
+    case 'away':
+      return '출석 중 이탈'
+    case 'unknown':
+      return '상태 확인 중'
+    default:
+      return '상태 수신 대기'
+  }
+}
+
+function normalizePanelColor(color?: string | null) {
+  return color === 'green' || color === 'red' || color === 'gray' ? color : null
+}
+
+function getStudentContinuousPanel(session: StudentAttendanceSession) {
+  const state = session.current_presence_state ?? session.monitoring_state?.current_presence_state ?? null
+  const explicitColor = normalizePanelColor(
+    session.panel_color ??
+      session.status_panel_color ??
+      session.monitoring_state?.panel_color ??
+      session.monitoring_state?.status_panel_color,
+  )
+  const color =
+    explicitColor ??
+    (state === 'present'
+      ? 'green'
+      : state === 'away'
+        ? 'red'
+        : 'gray')
+  return {
+    color,
+    label: getPresenceStateLabel(state),
+    state,
+    reason: session.last_presence_reason ?? session.monitoring_state?.last_presence_reason ?? null,
+    candidate: session.status_candidate ?? session.monitoring_state?.status_candidate ?? null,
+  }
+}
+
+function getStudentAwaySeconds(session: StudentAttendanceSession) {
+  if (typeof session.away_seconds === 'number') return session.away_seconds
+  if (typeof session.monitoring_state?.away_seconds === 'number') return session.monitoring_state.away_seconds
+  if (typeof session.away_minutes === 'number') return session.away_minutes * 60
+  if (typeof session.monitoring_state?.away_minutes === 'number') return session.monitoring_state.away_minutes * 60
+  return null
+}
+
+function getRosterAwaySeconds(student: AttendanceSessionRoster['students'][number]) {
+  if (typeof student.away_seconds === 'number') return student.away_seconds
+  if (typeof student.monitoring_state?.away_seconds === 'number') return student.monitoring_state.away_seconds
+  if (typeof student.away_minutes === 'number') return student.away_minutes * 60
+  if (typeof student.monitoring_state?.away_minutes === 'number') return student.monitoring_state.away_minutes * 60
+  return null
+}
+
+function formatAwayMinutesFromSeconds(seconds: number | null) {
+  if (seconds == null || Number.isNaN(seconds)) return '-'
+  return `${Math.max(0, Math.floor(seconds / 60))}분`
 }
 
 function formatFileSize(bytes?: number | null) {
@@ -4577,6 +4664,10 @@ function App() {
     )
     const showProfessorTimer = isProfessor && routeAttendancePage === 'timer' && Boolean(selectedAttendanceSlot)
     const showProfessorRoster = isProfessor && routeAttendancePage === 'roster' && Boolean(selectedAttendanceSlot)
+    const selectedAttendancePolicy = attendanceRoster?.session.attendance_policy ?? selectedAttendanceSlot?.attendance_policy ?? null
+    const isContinuousProfessorSession = isContinuousAttendancePolicy(selectedAttendancePolicy)
+    const showRosterAwayMinutes =
+      isContinuousProfessorSession || Boolean(attendanceRoster?.students.some((student) => getRosterAwaySeconds(student) != null))
     const semesterMatrixColumnCount = Math.max(
       0,
       ...((attendanceSemesterMatrix?.weeks ?? []).map((week) => week.slots.length)),
@@ -4623,6 +4714,9 @@ function App() {
               {studentAttendanceSessions.length > 0 ? (
                 <div className="attendance-student-session-list">
                   {studentAttendanceSessions.map((session) => {
+                    const isContinuousSession = isContinuousAttendancePolicy(session.attendance_policy)
+                    const continuousPanel = isContinuousSession ? getStudentContinuousPanel(session) : null
+                    const studentAwaySeconds = isContinuousSession ? getStudentAwaySeconds(session) : null
                     const detailRows = getStudentEligibilityDetailRows(session)
                     return (
                       <article key={session.session_id} className="attendance-student-session-card">
@@ -4635,16 +4729,44 @@ function App() {
                             <strong>포함 차시</strong>
                             <span>{getStudentBundleSlotLabels(session).join(' · ')}</span>
                           </div>
-                          <div className="helper-row">
-                            <strong>재실 판정</strong>
-                            <span>{getStudentEligibilitySummaryText(session)}</span>
-                          </div>
-                          <div className="helper-row">
-                            <strong>관측 단말</strong>
-                            <span>{getStudentEligibilityDeviceText(session)}</span>
-                          </div>
+                          {isContinuousSession ? (
+                            <>
+                              <div className="helper-row">
+                                <strong>정책</strong>
+                                <span>자동 재실 모니터링</span>
+                              </div>
+                              <div className="helper-row">
+                                <strong>누적 이탈</strong>
+                                <span>{formatAwayMinutesFromSeconds(studentAwaySeconds)}</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="helper-row">
+                                <strong>재실 판정</strong>
+                                <span>{getStudentEligibilitySummaryText(session)}</span>
+                              </div>
+                              <div className="helper-row">
+                                <strong>관측 단말</strong>
+                                <span>{getStudentEligibilityDeviceText(session)}</span>
+                              </div>
+                            </>
+                          )}
                         </div>
-                        {detailRows.length ? (
+                        {continuousPanel ? (
+                          <div
+                            className={`attendance-continuous-panel attendance-continuous-panel--${continuousPanel.color}`}
+                            aria-label="자동 재실 출석 상태"
+                          >
+                            <strong>{continuousPanel.label}</strong>
+                            <span>Backend 상태 업데이트를 표시합니다.</span>
+                            <span>
+                              누적 이탈 {formatAwayMinutesFromSeconds(studentAwaySeconds)}
+                              {continuousPanel.candidate ? ` · 예상 ${getAttendanceStatusLabel(continuousPanel.candidate)}` : ''}
+                            </span>
+                            {continuousPanel.reason ? <span>최근 사유 {continuousPanel.reason}</span> : null}
+                          </div>
+                        ) : detailRows.length ? (
                           <div className="attendance-eligibility-detail" aria-label="차시별 재실 판정">
                             {detailRows.map((row) => (
                               <span key={row.projectionKey}>
@@ -4653,13 +4775,15 @@ function App() {
                             ))}
                           </div>
                         ) : null}
-                        <button
-                          type="button"
-                          onClick={() => void handleStudentCheckIn(session.session_id)}
-                          disabled={!session.can_check_in || studentSubmittingSessionId === session.session_id}
-                        >
-                          {getStudentCheckInButtonText(session, studentSubmittingSessionId)}
-                        </button>
+                        {!isContinuousSession ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleStudentCheckIn(session.session_id)}
+                            disabled={!session.can_check_in || studentSubmittingSessionId === session.session_id}
+                          >
+                            {getStudentCheckInButtonText(session, studentSubmittingSessionId)}
+                          </button>
+                        ) : null}
                       </article>
                     )
                   })}
@@ -4775,7 +4899,9 @@ function App() {
                   <div className="attendance-live-roster">
                     <div className="attendance-live-roster-head">
                       <strong>실시간 학생 현황</strong>
-                      <span className="caption-text">학번 / 이름 / 체크 여부</span>
+                      <span className="caption-text">
+                        {isContinuousProfessorSession ? '학번 / 이름 / 자동 상태 / 누적 이탈' : '학번 / 이름 / 체크 여부'}
+                      </span>
                     </div>
                     <div className="attendance-roster-scroll">
                       <table className="attendance-live-table">
@@ -4783,21 +4909,43 @@ function App() {
                           <tr>
                             <th scope="col">학번</th>
                             <th scope="col">이름</th>
-                            <th scope="col">체크</th>
+                            {isContinuousProfessorSession ? (
+                              <>
+                                <th scope="col">상태</th>
+                                <th scope="col">누적 이탈</th>
+                              </>
+                            ) : (
+                              <th scope="col">체크</th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
-                          {attendanceRoster.students.map((student) => (
-                            <tr key={student.student_id}>
-                              <td className="attendance-roster-id-cell">{student.student_id}</td>
-                              <td className="attendance-roster-name-cell">{student.student_name}</td>
-                              <td>
-                                <span className={`attendance-live-mark${isLiveCheckedIn(student.final_status) ? ' attendance-live-mark--checked' : ' attendance-live-mark--unchecked'}`}>
-                                  {isLiveCheckedIn(student.final_status) ? 'O' : 'X'}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {attendanceRoster.students.map((student) => {
+                            const presenceState = student.current_presence_state ?? student.monitoring_state?.current_presence_state ?? null
+                            const statusCandidate = student.status_candidate ?? student.monitoring_state?.status_candidate ?? student.final_status
+                            return (
+                              <tr key={student.student_id}>
+                                <td className="attendance-roster-id-cell">{student.student_id}</td>
+                                <td className="attendance-roster-name-cell">{student.student_name}</td>
+                                {isContinuousProfessorSession ? (
+                                  <>
+                                    <td>
+                                      <span className={`attendance-status-pill attendance-status-pill--${statusCandidate ?? 'unchecked'}`}>
+                                        {getPresenceStateLabel(presenceState)} · {getAttendanceStatusLabel(statusCandidate)}
+                                      </span>
+                                    </td>
+                                    <td>{formatAwayMinutesFromSeconds(getRosterAwaySeconds(student))}</td>
+                                  </>
+                                ) : (
+                                  <td>
+                                    <span className={`attendance-live-mark${isLiveCheckedIn(student.final_status) ? ' attendance-live-mark--checked' : ' attendance-live-mark--unchecked'}`}>
+                                      {isLiveCheckedIn(student.final_status) ? 'O' : 'X'}
+                                    </span>
+                                  </td>
+                                )}
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -4872,6 +5020,7 @@ function App() {
                           <th scope="col">지각 ▲</th>
                           <th scope="col">결석 ✕</th>
                           <th scope="col">공결 ★</th>
+                          {showRosterAwayMinutes ? <th scope="col">누적 이탈</th> : null}
                           <th scope="col">공결 사유</th>
                           <th scope="col">동작</th>
                         </tr>
@@ -4932,6 +5081,13 @@ function App() {
                                   <span>★</span>
                                 </label>
                               </td>
+                              {showRosterAwayMinutes ? (
+                                <td>
+                                  <span className="attendance-away-minutes">
+                                    {formatAwayMinutesFromSeconds(getRosterAwaySeconds(student))}
+                                  </span>
+                                </td>
+                              ) : null}
                               <td>
                                 {draft.status === 'official' ? (
                                   <input

@@ -95,6 +95,9 @@ export type ReportExport = StoredObjectAttachment & {
 }
 
 export type AttendanceCsvExportVariant = 'summary' | 'full'
+export type AttendancePolicy = 'manual_v1' | 'smart_window_v1' | 'continuous_presence_v1'
+export type AttendancePresenceState = 'outside_time' | 'present' | 'away' | 'unknown'
+export type AttendancePanelColor = 'gray' | 'green' | 'red'
 
 export type StudentAssignmentSubmission = {
   id: number
@@ -548,6 +551,7 @@ export type AttendanceSlot = {
   slot_state: 'unchecked' | 'offline' | 'online' | 'canceled'
   session_id?: number | null
   session_mode?: 'manual' | 'smart' | 'canceled' | null
+  attendance_policy?: AttendancePolicy | string | null
   session_status?: 'active' | 'closed' | 'expired' | 'canceled' | null
   expires_at?: string | null
   aggregate: AttendanceSlotAggregate
@@ -607,6 +611,20 @@ export type AttendanceRosterStudent = {
   final_status?: 'present' | 'absent' | 'late' | 'official' | 'sick' | null
   attendance_reason?: string | null
   history_count: number
+  slot_statuses?: Record<string, 'present' | 'absent' | 'late' | 'official' | 'sick' | null>
+  away_minutes?: number | null
+  away_seconds?: number | null
+  current_presence_state?: AttendancePresenceState | string | null
+  last_presence_reason?: string | null
+  status_candidate?: 'present' | 'late' | 'absent' | string | null
+  monitoring_state?: {
+    away_minutes?: number | null
+    away_seconds?: number | null
+    current_presence_state?: AttendancePresenceState | string | null
+    last_presence_reason?: string | null
+    status_candidate?: 'present' | 'late' | 'absent' | string | null
+    last_accounted_until?: string | null
+  } | null
 }
 
 export type AttendanceSessionRoster = {
@@ -615,6 +633,7 @@ export type AttendanceSessionRoster = {
     projection_key: string
     projection_keys?: string[]
     mode?: 'manual' | 'smart' | 'canceled' | null
+    attendance_policy?: AttendancePolicy | string | null
     status: 'active' | 'closed' | 'expired' | 'canceled' | 'unchecked'
     expires_at?: string | null
     version: number
@@ -660,9 +679,29 @@ export type StudentAttendanceSession = {
   session_date: string
   slot_start_at: string
   slot_end_at: string
+  attendance_policy?: AttendancePolicy | string | null
   expires_at?: string | null
   can_check_in: boolean
   eligibility: EligibilityResponse | StudentAttendanceEligibilitySummary
+  panel_color?: AttendancePanelColor | string | null
+  status_panel_color?: AttendancePanelColor | string | null
+  current_presence_state?: AttendancePresenceState | string | null
+  is_attendance_time?: boolean | null
+  away_minutes?: number | null
+  away_seconds?: number | null
+  last_presence_reason?: string | null
+  status_candidate?: 'present' | 'late' | 'absent' | string | null
+  monitoring_state?: {
+    panel_color?: AttendancePanelColor | string | null
+    status_panel_color?: AttendancePanelColor | string | null
+    current_presence_state?: AttendancePresenceState | string | null
+    is_attendance_time?: boolean | null
+    away_minutes?: number | null
+    away_seconds?: number | null
+    last_presence_reason?: string | null
+    status_candidate?: 'present' | 'late' | 'absent' | string | null
+    last_accounted_until?: string | null
+  } | null
   version: number
 }
 
