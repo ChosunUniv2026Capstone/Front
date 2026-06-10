@@ -363,7 +363,7 @@ function getProximityCheckSummary(eligible: boolean) {
 function isApOfflineAttendanceSession(session: StudentAttendanceSession) {
   const eligibility = session.eligibility
   const perSlot: StudentAttendanceSlotEligibility[] = 'per_slot' in eligibility ? eligibility.per_slot : []
-  return perSlot.length > 0 && perSlot.every((item) => item.eligibility.reason_code === 'AP_OFFLINE')
+  return perSlot.length > 0 && perSlot.every((item) => item.eligibility?.reason_code === 'AP_OFFLINE')
 }
 
 function isContinuousAttendancePolicy(policy?: string | null) {
@@ -415,13 +415,26 @@ function normalizePanelColor(color?: string | null) {
   return color === 'green' || color === 'red' || color === 'gray' ? color : null
 }
 
+function getStudentContinuousPresence(session: StudentAttendanceSession) {
+  const eligibility = session.eligibility
+  if (!('per_slot' in eligibility)) return null
+  return eligibility.per_slot.find((item) => item.continuous_presence)?.continuous_presence ?? null
+}
+
 function getStudentContinuousPanel(session: StudentAttendanceSession) {
-  const state = session.current_presence_state ?? session.monitoring_state?.current_presence_state ?? null
+  const continuousPresence = getStudentContinuousPresence(session)
+  const state =
+    session.current_presence_state ??
+    session.monitoring_state?.current_presence_state ??
+    continuousPresence?.current_presence_state ??
+    null
   const explicitColor = normalizePanelColor(
     session.panel_color ??
       session.status_panel_color ??
       session.monitoring_state?.panel_color ??
-      session.monitoring_state?.status_panel_color,
+      session.monitoring_state?.status_panel_color ??
+      continuousPresence?.panel_color ??
+      continuousPresence?.status_panel_color,
   )
   const color =
     explicitColor ??
@@ -434,24 +447,29 @@ function getStudentContinuousPanel(session: StudentAttendanceSession) {
     color,
     label: getPresenceStateLabel(state),
     state,
-    reason: session.last_presence_reason ?? session.monitoring_state?.last_presence_reason ?? null,
-    candidate: session.status_candidate ?? session.monitoring_state?.status_candidate ?? null,
+    reason: session.last_presence_reason ?? session.monitoring_state?.last_presence_reason ?? continuousPresence?.last_presence_reason ?? null,
+    candidate: session.status_candidate ?? session.monitoring_state?.status_candidate ?? continuousPresence?.status_candidate ?? null,
   }
 }
 
 function getStudentAwaySeconds(session: StudentAttendanceSession) {
+  const continuousPresence = getStudentContinuousPresence(session)
   if (typeof session.away_seconds === 'number') return session.away_seconds
   if (typeof session.monitoring_state?.away_seconds === 'number') return session.monitoring_state.away_seconds
+  if (typeof continuousPresence?.away_seconds === 'number') return continuousPresence.away_seconds
   if (typeof session.away_minutes === 'number') return session.away_minutes * 60
   if (typeof session.monitoring_state?.away_minutes === 'number') return session.monitoring_state.away_minutes * 60
+  if (typeof continuousPresence?.away_minutes === 'number') return continuousPresence.away_minutes * 60
   return null
 }
 
 function getRosterAwaySeconds(student: AttendanceSessionRoster['students'][number]) {
   if (typeof student.away_seconds === 'number') return student.away_seconds
   if (typeof student.monitoring_state?.away_seconds === 'number') return student.monitoring_state.away_seconds
+  if (typeof student.continuous_presence?.away_seconds === 'number') return student.continuous_presence.away_seconds
   if (typeof student.away_minutes === 'number') return student.away_minutes * 60
   if (typeof student.monitoring_state?.away_minutes === 'number') return student.monitoring_state.away_minutes * 60
+  if (typeof student.continuous_presence?.away_minutes === 'number') return student.continuous_presence.away_minutes * 60
   return null
 }
 
@@ -1630,6 +1648,7 @@ function App() {
       const result = await api.applyProfessorAttendanceBatch(currentUser.login_id, selectedCourse.course_code, {
         projection_keys: selectedBatchProjectionKeys,
         mode: selectedAttendanceMode,
+        attendance_policy: selectedAttendanceMode === 'smart' ? 'continuous_presence_v1' : undefined,
       })
       const summary = result.results.map((item) => `${item.projection_key.split(':')[2]} ${item.code}`).join(', ')
       setAttendanceMessage(`출석 작업을 반영했습니다. ${summary}`)
@@ -1744,10 +1763,12 @@ function App() {
       setError('공결 사유를 입력해 주세요.')
       return
     }
+    const projectionKey = routeSessionId == null ? routeProjectionKey ?? attendanceRoster.session.projection_key : null
     try {
       await api.updateProfessorAttendanceRecord(currentUser.login_id, attendanceRoster.session.session_id, studentIdValue, {
         status: draft.status,
         reason,
+        projection_key: projectionKey ?? undefined,
       })
       setAttendanceMessage('학생 출석 상태를 저장했습니다.')
       await loadAttendanceRoster(attendanceRoster.session.session_id)
@@ -1783,6 +1804,7 @@ function App() {
         studentId: student.student_id,
         status: draft.status,
         reason: draft.status === 'official' ? draft.reason.trim() : null,
+        projectionKey: routeSessionId == null ? routeProjectionKey ?? attendanceRoster.session.projection_key : null,
       }
     })
 
@@ -1795,6 +1817,7 @@ function App() {
         await api.updateProfessorAttendanceRecord(currentUser.login_id, sessionId, target.studentId, {
           status: target.status,
           reason: target.reason,
+          projection_key: target.projectionKey ?? undefined,
         })
         savedCount += 1
       }
@@ -1855,7 +1878,7 @@ function App() {
     if (currentUser.role !== 'student') return
     const refresh = window.setInterval(() => {
       void refreshStudentAttendance(selectedCourse.course_code)
-    }, 1000)
+    }, 10000)
     return () => window.clearInterval(refresh)
   }, [courseSection, currentUser, refreshStudentAttendance, selectedCourse])
 
@@ -4628,7 +4651,7 @@ function App() {
       const devices = Array.from(
         new Set(
           eligibility.per_slot
-            .map((item) => item.eligibility.matched_device_mac)
+            .map((item) => item.eligibility?.matched_device_mac)
             .filter((mac): mac is string => Boolean(mac)),
         ),
       )
@@ -4648,7 +4671,7 @@ function App() {
       return eligibility.per_slot.map((item, index) => ({
         projectionKey: item.projection_key,
         label: labelsByProjectionKey.get(item.projection_key) ?? `${index + 1}차시`,
-        text: item.eligibility.eligible ? '출석 가능' : getEligibilityReasonLabel(item.eligibility.reason_code),
+        text: item.eligibility?.eligible ? '출석 가능' : getEligibilityReasonLabel(item.eligibility?.reason_code ?? 'UNKNOWN'),
       }))
     }
 
@@ -4921,8 +4944,16 @@ function App() {
                         </thead>
                         <tbody>
                           {attendanceRoster.students.map((student) => {
-                            const presenceState = student.current_presence_state ?? student.monitoring_state?.current_presence_state ?? null
-                            const statusCandidate = student.status_candidate ?? student.monitoring_state?.status_candidate ?? student.final_status
+                            const presenceState =
+                              student.current_presence_state ??
+                              student.monitoring_state?.current_presence_state ??
+                              student.continuous_presence?.current_presence_state ??
+                              null
+                            const statusCandidate =
+                              student.status_candidate ??
+                              student.monitoring_state?.status_candidate ??
+                              student.continuous_presence?.status_candidate ??
+                              student.final_status
                             return (
                               <tr key={student.student_id}>
                                 <td className="attendance-roster-id-cell">{student.student_id}</td>
