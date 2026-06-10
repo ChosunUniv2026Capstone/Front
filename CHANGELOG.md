@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.6.1...smart-class-front-v0.7.0) (2026-06-10)
+
+
+### Features
+
+* **frontend:** show continuous attendance state ([452077d](https://github.com/ChosunUniv2026Capstone/Front/commit/452077d98627eb8163d80958f8efe99c84c489cb))
+
 ## [0.6.2](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.6.1...smart-class-front-v0.6.2) (2026-05-31)
 
 
