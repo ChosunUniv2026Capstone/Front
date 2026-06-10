@@ -86,6 +86,7 @@ const attendanceTimeline = {
           slot_state: 'unchecked',
           session_id: null,
           session_mode: null,
+          attendance_policy: null,
           session_status: null,
           expires_at: null,
           aggregate: {
@@ -118,6 +119,7 @@ const slotRoster = {
     projection_key: projectionKey,
     projection_keys: [projectionKey],
     mode: null,
+    attendance_policy: null,
     status: 'unchecked',
     expires_at: null,
     version: 0,
@@ -130,6 +132,9 @@ const slotRoster = {
       final_status: null,
       attendance_reason: null,
       history_count: 0,
+      away_seconds: null,
+      current_presence_state: null,
+      status_candidate: null,
     },
   ],
   aggregate: {
@@ -246,7 +251,7 @@ async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
 async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], options?: {
   initialSlot?: Partial<(typeof attendanceTimeline.weeks)[number]['slots'][number]>
   rosterUpdates?: Array<{ status: string; reason?: string | null }>
-  rosterUpdateRequests?: Array<{ studentId: string; status: string; reason?: string | null }>
+  rosterUpdateRequests?: Array<{ studentId: string; status: string; reason?: string | null; projection_key?: string | null }>
   rosterUpdateFailures?: string[]
   rosterStudents?: typeof slotRoster.students
 }) {
@@ -260,6 +265,7 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
       ...slotRoster.session,
       session_id: slotState.session_id,
       mode: slotState.session_mode,
+      attendance_policy: slotState.attendance_policy,
       status: slotState.session_status ?? slotState.slot_state,
       expires_at: slotState.expires_at,
     },
@@ -334,15 +340,21 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
   })
 
   await page.route('**/api/professors/PRF002/courses/CSE116/attendance/sessions/batch', async (route) => {
-    const body = route.request().postDataJSON() as { mode: 'manual' | 'smart' | 'canceled'; projection_keys: string[] }
+    const body = route.request().postDataJSON() as {
+      mode: 'manual' | 'smart' | 'canceled'
+      projection_keys: string[]
+      attendance_policy?: 'smart_window_v1' | 'continuous_presence_v1'
+    }
     const nextSessionId = body.mode === 'smart' ? 701 : body.mode === 'manual' ? 702 : null
     slotState.session_id = nextSessionId
     slotState.session_mode = body.mode
+    slotState.attendance_policy = body.mode === 'smart' ? body.attendance_policy ?? 'smart_window_v1' : body.mode === 'manual' ? 'manual_v1' : null
     slotState.slot_state = body.mode === 'smart' ? 'online' : body.mode === 'manual' ? 'offline' : 'canceled'
     slotState.session_status = body.mode === 'canceled' ? 'canceled' : 'active'
     slotState.expires_at = body.mode === 'smart' ? '2099-03-03T15:10:00Z' : null
     rosterState.session.session_id = nextSessionId
     rosterState.session.mode = body.mode
+    rosterState.session.attendance_policy = slotState.attendance_policy
     rosterState.session.status = slotState.session_status
     rosterState.session.expires_at = slotState.expires_at
 
@@ -360,6 +372,7 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
             resulting_slot_state: slotState.slot_state,
             event_type: body.mode === 'smart' ? 'session.opened' : body.mode === 'manual' ? 'session.opened' : 'session.canceled',
             expires_at: slotState.expires_at,
+            attendance_policy: slotState.attendance_policy,
           },
         ],
         changed_projection_keys: [projectionKey],
@@ -395,7 +408,11 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
   })
 
   await page.route('**/api/professors/PRF002/attendance/sessions/*/students/*', async (route) => {
-    const body = route.request().postDataJSON() as { status: 'present' | 'absent' | 'late' | 'official' | 'sick'; reason?: string | null }
+    const body = route.request().postDataJSON() as {
+      status: 'present' | 'absent' | 'late' | 'official' | 'sick'
+      reason?: string | null
+      projection_key?: string | null
+    }
     const studentId = new URL(route.request().url()).pathname.split('/').at(-1) ?? ''
     options?.rosterUpdates?.push(body)
     options?.rosterUpdateRequests?.push({ studentId, ...body })
@@ -443,7 +460,10 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
   })
 }
 
-async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
+async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page'], options?: {
+  continuous?: boolean
+  checkInRequests?: number[]
+}) {
   await page.addInitScript(() => {
     class MockWebSocket {
       url
@@ -515,18 +535,35 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
             slot_start_at: '15:00:00',
             slot_end_at: '16:00:00',
             expires_at: '2099-03-03T15:10:00Z',
-            can_check_in: true,
+            attendance_policy: options?.continuous ? 'continuous_presence_v1' : 'smart_window_v1',
+            can_check_in: !options?.continuous,
+            panel_color: options?.continuous ? 'red' : null,
+            current_presence_state: options?.continuous ? 'away' : null,
+            away_seconds: options?.continuous ? 720 : null,
+            status_candidate: options?.continuous ? 'late' : null,
+            last_presence_reason: options?.continuous ? '강의실 이탈 감지' : null,
             eligibility: {
               eligible_slot_count: 1,
               rejected_slot_count: 1,
               per_slot: [
                 {
                   projection_key: projectionKey,
-                  eligibility: {
-                    eligible: true,
-                    reason_code: 'OK',
-                    matched_device_mac: 'AA:BB:CC:DD:EE:FF',
-                  },
+                  eligibility: options?.continuous
+                    ? null
+                    : {
+                        eligible: true,
+                        reason_code: 'OK',
+                        matched_device_mac: 'AA:BB:CC:DD:EE:FF',
+                      },
+                  continuous_presence: options?.continuous
+                    ? {
+                        panel_color: 'red',
+                        current_presence_state: 'away',
+                        away_seconds: 720,
+                        status_candidate: 'late',
+                        last_presence_reason: '강의실 이탈 감지',
+                      }
+                    : null,
                 },
                 {
                   projection_key: 'CSE116:B101:2026-03-03:15:30:00:16:00:00',
@@ -565,6 +602,7 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page']) {
   })
 
   await page.route('**/api/students/20201234/attendance/sessions/701/check-in', async (route) => {
+    options?.checkInRequests?.push(701)
     await route.fulfill({
       json: apiEnvelope({
         code: 'ATTENDANCE_CHECK_IN_OK',
@@ -649,6 +687,33 @@ test('manual attendance selection routes to roster and shows required roster col
   await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
   await expect(page.getByText('차시별 예외 수정')).toBeVisible()
   await expect(page.getByText('Kim Student 06')).toBeVisible()
+})
+
+test('slot-specific roster save includes projection key to avoid bundle-wide overwrite', async ({ page }) => {
+  const rosterUpdateRequests: Array<{ studentId: string; status: string; reason?: string | null; projection_key?: string | null }> = []
+  await mockProfessorFlowApp(page, {
+    rosterUpdateRequests,
+    initialSlot: {
+      session_id: 702,
+      session_mode: 'manual',
+      session_status: 'active',
+      slot_state: 'offline',
+      expires_at: null,
+    },
+  })
+
+  await page.goto(`/courses/CSE116/attendance/slots/${encodeURIComponent(projectionKey)}/roster`)
+
+  await expect(page.getByText('차시 예외 수정 · 출석 현황')).toBeVisible()
+  await page.locator('input[name="attendance-status-20201239"]').nth(0).check({ force: true })
+  await page.locator('.attendance-row-actions').getByRole('button', { name: '저장' }).first().click()
+
+  expect(rosterUpdateRequests.at(-1)).toEqual({
+    studentId: '20201239',
+    status: 'present',
+    reason: null,
+    projection_key: projectionKey,
+  })
 })
 
 test('smart attendance selection routes to timer and session stop returns to roster', async ({ page }) => {
@@ -929,6 +994,55 @@ test('student attendance page shows one bundle card with one check-in action', a
 
   await page.getByRole('button', { name: '출석하기' }).click()
   await expect(page.getByText('스마트 출석이 반영되었습니다.')).toBeVisible()
+})
+
+test('student continuous attendance shows status panel without check-in action', async ({ page }) => {
+  const checkInRequests: number[] = []
+  await mockStudentBundleApp(page, { continuous: true, checkInRequests })
+
+  await page.goto('/courses/CSE116/attendance')
+
+  await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
+  await expect(page.getByText('자동 재실 모니터링')).toBeVisible()
+  await expect(page.getByLabel('자동 재실 출석 상태')).toContainText('출석 중 이탈')
+  await expect(page.getByLabel('자동 재실 출석 상태')).toContainText('누적 이탈 12분')
+  await expect(page.getByRole('button', { name: '출석하기' })).toHaveCount(0)
+  expect(checkInRequests).toEqual([])
+})
+
+test('professor continuous roster surfaces away minutes from backend state', async ({ page }) => {
+  await mockProfessorFlowApp(page, {
+    initialSlot: {
+      session_id: 704,
+      session_mode: 'smart',
+      attendance_policy: 'continuous_presence_v1',
+      session_status: 'active',
+      slot_state: 'online',
+      expires_at: '2099-03-03T16:00:00Z',
+    },
+    rosterStudents: [
+      {
+        ...slotRoster.students[0],
+        final_status: null,
+        current_presence_state: 'away',
+        status_candidate: 'late',
+        away_seconds: 720,
+      },
+    ],
+  })
+
+  await page.goto('/courses/CSE116/attendance')
+  await page.locator('.attendance-slot-main').click()
+
+  await expect(page).toHaveURL(/\/courses\/CSE116\/attendance\/sessions\/704\/timer$/)
+  await expect(page.getByText('실시간 학생 현황')).toBeVisible()
+  await expect(page.getByText('출석 중 이탈 · 지각')).toBeVisible()
+  await expect(page.getByText('12분')).toBeVisible()
+
+  await page.goto('/courses/CSE116/attendance/sessions/704/roster')
+  await expect(page.getByText('학생 목록 · 출석 현황')).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: '누적 이탈' })).toBeVisible()
+  await expect(page.locator('.attendance-away-minutes')).toHaveText('12분')
 })
 
 test('professor dashboard exposes per-student attendance stats table', async ({ page }) => {
