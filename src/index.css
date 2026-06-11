@@ -2956,6 +2956,7 @@ code,
 .attendance-semester-scroll {
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   overflow-x: scroll;
   overflow-y: hidden;
   padding-bottom: 10px;
@@ -2982,6 +2983,13 @@ code,
   border: 2px solid #e2e8f0;
   border-radius: 999px;
   background: #64748b;
+}
+
+.course-main,
+.course-stack,
+.course-stack > .section-card,
+.course-stack > .section-card > * {
+  min-width: 0;
 }
 
 .attendance-live-roster {
