@@ -2956,9 +2956,32 @@ code,
 .attendance-semester-scroll {
   width: 100%;
   max-width: 100%;
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: hidden;
-  padding-bottom: 6px;
+  padding-bottom: 10px;
+  scrollbar-color: #64748b #e2e8f0;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+}
+
+.attendance-semester-scroll:focus {
+  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline-offset: 2px;
+}
+
+.attendance-semester-scroll::-webkit-scrollbar {
+  height: 12px;
+}
+
+.attendance-semester-scroll::-webkit-scrollbar-track {
+  background: #e2e8f0;
+  border-radius: 999px;
+}
+
+.attendance-semester-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid #e2e8f0;
+  border-radius: 999px;
+  background: #64748b;
 }
 
 .attendance-live-roster {

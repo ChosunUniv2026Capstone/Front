@@ -999,7 +999,8 @@ test('student attendance page shows one bundle card with one check-in action', a
 
   await expect(page.getByText('스마트 출석 현황')).toBeVisible()
   await expect(page.locator('.attendance-semester-table')).toBeVisible()
-  await expect(page.locator('.attendance-semester-scroll')).toHaveCSS('overflow-x', 'auto')
+  await expect(page.getByRole('region', { name: '학기 전체 출석 현황 가로 스크롤 표' })).toBeVisible()
+  await expect(page.locator('.attendance-semester-scroll')).toHaveCSS('overflow-x', 'scroll')
   await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
   await expect(page.getByText('1차시 1교시 · 2차시 2교시')).toBeVisible()
   await expect(page.getByText('1개 차시 출석 가능 / 1개 확인 필요')).toBeVisible()
