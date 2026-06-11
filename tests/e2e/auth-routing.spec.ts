@@ -186,6 +186,15 @@ const studentSemesterMatrix = {
   ],
 }
 
+const wideSemesterSlots = Array.from({ length: 80 }, (_, index) => ({
+  ...studentSemesterMatrix.weeks[0].slots[0],
+  projection_key: `CSE999:B101:2026-03-03:${String(Math.floor(index / 2)).padStart(2, '0')}:${index % 2 === 0 ? '00' : '30'}:00:${String(Math.floor((index + 1) / 2) % 24).padStart(2, '0')}:${index % 2 === 0 ? '30' : '00'}:00`,
+  lesson_index_within_week: index + 1,
+  period_label: `${index + 1}교시`,
+  display_label: `${index + 1}차시: CSE999 horizontal scroll fixture`,
+  status: index % 3 === 0 ? 'present' : index % 3 === 1 ? 'late' : 'pending',
+}))
+
 async function mockProfessorApp(page: Parameters<typeof test>[0]['page']) {
   await page.addInitScript(() => {
     class MockWebSocket {
@@ -602,12 +611,7 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page'], op
         weeks: [
           {
             ...studentSemesterMatrix.weeks[0],
-            slots: [
-              {
-                ...studentSemesterMatrix.weeks[0].slots[0],
-                status: 'pending',
-              },
-            ],
+            slots: wideSemesterSlots,
           },
         ],
       }),
@@ -1001,6 +1005,11 @@ test('student attendance page shows one bundle card with one check-in action', a
   await expect(page.locator('.attendance-semester-table')).toBeVisible()
   await expect(page.getByRole('region', { name: '학기 전체 출석 현황 가로 스크롤 표' })).toBeVisible()
   await expect(page.locator('.attendance-semester-scroll')).toHaveCSS('overflow-x', 'scroll')
+  const scrollMetrics = await page.locator('.attendance-semester-scroll').evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }))
+  expect(scrollMetrics.scrollWidth).toBeGreaterThan(scrollMetrics.clientWidth)
   await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
   await expect(page.getByText('1차시 1교시 · 2차시 2교시')).toBeVisible()
   await expect(page.getByText('1개 차시 출석 가능 / 1개 확인 필요')).toBeVisible()
