@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.4](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.7.3...smart-class-front-v0.7.4) (2026-06-11)
+
+
+### Bug Fixes
+
+* **frontend:** avoid blocking on slow session bootstrap ([#60](https://github.com/ChosunUniv2026Capstone/Front/issues/60)) ([d819804](https://github.com/ChosunUniv2026Capstone/Front/commit/d819804e86dc433722867bdaeaee499a90478c7f))
+
 ## [0.7.3](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.7.2...smart-class-front-v0.7.3) (2026-06-11)
 
 
