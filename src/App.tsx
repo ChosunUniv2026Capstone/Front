@@ -370,6 +370,28 @@ function isContinuousAttendancePolicy(policy?: string | null) {
   return policy === 'continuous_presence_v1'
 }
 
+function hasContinuousPresencePayload(session: StudentAttendanceSession) {
+  const eligibility = session.eligibility
+  const hasPerSlotContinuousPresence =
+    'per_slot' in eligibility && eligibility.per_slot.some((item) => item.continuous_presence)
+  return Boolean(
+    session.check_in_policy === 'disabled_continuous_presence' ||
+      session.continuous_presence ||
+      session.monitoring_state ||
+      hasPerSlotContinuousPresence ||
+      session.current_presence_state ||
+      session.panel_color ||
+      session.status_panel_color ||
+      typeof session.away_seconds === 'number' ||
+      typeof session.away_minutes === 'number' ||
+      session.status_candidate,
+  )
+}
+
+function isContinuousAttendanceSession(session: StudentAttendanceSession) {
+  return isContinuousAttendancePolicy(session.attendance_policy) || hasContinuousPresencePayload(session)
+}
+
 function getStudentCheckInButtonText(session: StudentAttendanceSession, submittingSessionId: number | null) {
   if (submittingSessionId === session.session_id) return '처리 중...'
   if (session.can_check_in) return '출석하기'
@@ -399,7 +421,7 @@ function getAttendanceStatusLabel(status?: string | null) {
 function getPresenceStateLabel(state?: string | null) {
   switch (state) {
     case 'outside_time':
-      return '출석 외 시간'
+      return '수업시간 아님'
     case 'present':
       return '출석 중 재실'
     case 'away':
@@ -416,6 +438,7 @@ function normalizePanelColor(color?: string | null) {
 }
 
 function getStudentContinuousPresence(session: StudentAttendanceSession) {
+  if (session.continuous_presence) return session.continuous_presence
   const eligibility = session.eligibility
   if (!('per_slot' in eligibility)) return null
   return eligibility.per_slot.find((item) => item.continuous_presence)?.continuous_presence ?? null
@@ -450,6 +473,12 @@ function getStudentContinuousPanel(session: StudentAttendanceSession) {
     reason: session.last_presence_reason ?? session.monitoring_state?.last_presence_reason ?? continuousPresence?.last_presence_reason ?? null,
     candidate: session.status_candidate ?? session.monitoring_state?.status_candidate ?? continuousPresence?.status_candidate ?? null,
   }
+}
+
+function getStudentAttendanceMenuLabel(panel: ReturnType<typeof getStudentContinuousPanel> | null) {
+  if (panel?.state === 'present' || panel?.color === 'green') return '수업 중 재실'
+  if (panel?.state === 'away' || panel?.color === 'red') return '수업 중 이탈'
+  return '수업시간 아님'
 }
 
 function getStudentAwaySeconds(session: StudentAttendanceSession) {
@@ -1531,6 +1560,18 @@ function App() {
     }
   }, [currentUser, routeAttendancePage, selectedCourse?.course_code])
 
+  const refreshStudentActiveAttendanceSessions = useCallback(async (nextCourseCode = selectedCourse?.course_code) => {
+    if (!currentUser || currentUser.role !== 'student' || !nextCourseCode) return
+    try {
+      const nextSessions = await api.listStudentActiveAttendanceSessions(currentUser.login_id, nextCourseCode)
+      setStudentAttendanceSessions(nextSessions.sessions)
+    } catch (caughtError) {
+      if (courseSection === 'attendance') {
+        setError(caughtError instanceof Error ? caughtError.message : '학생 출석 세션을 불러오지 못했습니다.')
+      }
+    }
+  }, [courseSection, currentUser, selectedCourse?.course_code])
+
   const refreshStudentAttendance = useCallback(async (nextCourseCode = selectedCourse?.course_code) => {
     if (!currentUser || currentUser.role !== 'student' || !nextCourseCode) return
     setAttendanceLoading(true)
@@ -1866,6 +1907,16 @@ function App() {
       void refreshStudentAttendance(selectedCourse.course_code)
     }
   }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
+
+  useEffect(() => {
+    if (!selectedCourse || !currentUser || currentUser.role !== 'student') return
+    if (courseSection === 'attendance') return
+    void refreshStudentActiveAttendanceSessions(selectedCourse.course_code)
+    const refresh = window.setInterval(() => {
+      void refreshStudentActiveAttendanceSessions(selectedCourse.course_code)
+    }, 10000)
+    return () => window.clearInterval(refresh)
+  }, [courseSection, currentUser, refreshStudentActiveAttendanceSessions, selectedCourse])
 
   useEffect(() => {
     if (courseSection !== 'attendance') return
@@ -3165,7 +3216,7 @@ function App() {
     ]
 
     if (isStudent) {
-      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'lms', label: '성적·문의·진도' }, { id: 'attendance', label: '출석 확인' }]
+      return [...commonItems, { id: 'notices', label: '공지사항' }, { id: 'assignments', label: '과제' }, { id: 'exams', label: '시험' }, { id: 'lms', label: '성적·문의·진도' }, { id: 'attendance', label: '출석 상태' }]
     }
 
     if (isProfessor) {
@@ -3174,6 +3225,16 @@ function App() {
 
     return commonItems
   }, [isProfessor, isStudent])
+
+  const studentAttendanceMenuStatus = useMemo(() => {
+    if (!isStudent) return null
+    const continuousSession = studentAttendanceSessions.find(isContinuousAttendanceSession) ?? null
+    const panel = continuousSession ? getStudentContinuousPanel(continuousSession) : null
+    return {
+      color: panel?.color ?? 'gray',
+      label: getStudentAttendanceMenuLabel(panel),
+    }
+  }, [isStudent, studentAttendanceSessions])
 
   function renderLoginPage() {
     const loginCalendarCells = getCalendarMonthCells(loginCalendarMonth)
@@ -4695,6 +4756,7 @@ function App() {
       0,
       ...((attendanceSemesterMatrix?.weeks ?? []).map((week) => week.slots.length)),
     )
+    const semesterMatrixMinWidth = Math.max(720, 104 + semesterMatrixColumnCount * 64)
 
     return (
       <div className="course-stack">
@@ -4737,7 +4799,7 @@ function App() {
               {studentAttendanceSessions.length > 0 ? (
                 <div className="attendance-student-session-list">
                   {studentAttendanceSessions.map((session) => {
-                    const isContinuousSession = isContinuousAttendancePolicy(session.attendance_policy)
+                    const isContinuousSession = isContinuousAttendanceSession(session)
                     const continuousPanel = isContinuousSession ? getStudentContinuousPanel(session) : null
                     const studentAwaySeconds = isContinuousSession ? getStudentAwaySeconds(session) : null
                     const detailRows = getStudentEligibilityDetailRows(session)
@@ -4825,8 +4887,8 @@ function App() {
                     <span><i className="attendance-semester-dot attendance-semester-dot--official" />공결</span>
                     <span><i className="attendance-semester-dot attendance-semester-dot--pending" />미진행/진행중</span>
                   </div>
-                  <div className="attendance-roster-scroll">
-                    <table className="attendance-semester-table">
+                  <div className="attendance-semester-scroll">
+                    <table className="attendance-semester-table" style={{ minWidth: semesterMatrixMinWidth }}>
                       <thead>
                         <tr>
                           <th scope="col">주차</th>
@@ -6711,16 +6773,25 @@ function App() {
             {courseMenuItems.length > 2 ? (
               <div className="menu-group">
                 <p className="menu-group-title">{isStudent ? '학습 지원' : '권한별 기능'}</p>
-                {courseMenuItems.slice(2).map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`menu-button${courseSection === item.id ? ' active' : ''}`}
-                    onClick={() => selectedCourse && navigate({ kind: 'course', courseCode: selectedCourse.course_code, section: item.id })}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+                {courseMenuItems.slice(2).map((item) => {
+                  const attendanceStatus = isStudent && item.id === 'attendance' ? studentAttendanceMenuStatus : null
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-label={attendanceStatus ? `출석 상태: ${attendanceStatus.label}` : undefined}
+                      className={`menu-button${courseSection === item.id ? ' active' : ''}${attendanceStatus ? ` attendance-menu-button attendance-menu-button--${attendanceStatus.color}` : ''}`}
+                      onClick={() => selectedCourse && navigate({ kind: 'course', courseCode: selectedCourse.course_code, section: item.id })}
+                    >
+                      {attendanceStatus ? (
+                        <span className={`attendance-menu-status attendance-menu-status--${attendanceStatus.color}`}>
+                          <span className="attendance-menu-status-dot" aria-hidden="true" />
+                          <span>{attendanceStatus.label}</span>
+                        </span>
+                      ) : item.label}
+                    </button>
+                  )
+                })}
               </div>
             ) : null}
           </SectionCard>

@@ -2746,6 +2746,10 @@ code,
   min-width: 720px;
 }
 
+.attendance-semester-table {
+  table-layout: fixed;
+}
+
 .attendance-semester-table th,
 .attendance-semester-table td,
 .attendance-stats-table th,
@@ -2758,7 +2762,13 @@ code,
 .attendance-semester-table th:first-child,
 .attendance-stats-table th:first-child,
 .attendance-stats-table td:first-child {
+  min-width: 96px;
   white-space: nowrap;
+}
+
+.attendance-semester-table th:not(:first-child),
+.attendance-semester-table td:not(:first-child) {
+  min-width: 56px;
 }
 
 .attendance-semester-cell {
@@ -2844,6 +2854,52 @@ code,
   color: #475569;
 }
 
+.attendance-menu-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid transparent;
+}
+
+.attendance-menu-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.attendance-menu-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.65);
+}
+
+.attendance-menu-button--gray,
+.attendance-menu-button--gray.active,
+.attendance-menu-button--gray:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.attendance-menu-button--green,
+.attendance-menu-button--green.active,
+.attendance-menu-button--green:hover {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.attendance-menu-button--red,
+.attendance-menu-button--red.active,
+.attendance-menu-button--red:hover {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .attendance-slot-title {
   display: flex;
   flex-wrap: wrap;
@@ -2895,6 +2951,14 @@ code,
 .attendance-roster-scroll {
   width: 100%;
   overflow-x: auto;
+}
+
+.attendance-semester-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 6px;
 }
 
 .attendance-live-roster {

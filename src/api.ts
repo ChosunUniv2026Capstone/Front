@@ -691,9 +691,11 @@ export type StudentAttendanceSession = {
   slot_start_at: string
   slot_end_at: string
   attendance_policy?: AttendancePolicy | string | null
+  check_in_policy?: 'disabled_continuous_presence' | 'smart_window_self_check_in' | string | null
   expires_at?: string | null
   can_check_in: boolean
   eligibility: EligibilityResponse | StudentAttendanceEligibilitySummary
+  continuous_presence?: AttendanceContinuousPresenceState | null
   panel_color?: AttendancePanelColor | string | null
   status_panel_color?: AttendancePanelColor | string | null
   current_presence_state?: AttendancePresenceState | string | null
