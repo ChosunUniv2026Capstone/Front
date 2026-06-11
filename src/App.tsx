@@ -4887,7 +4887,12 @@ function App() {
                     <span><i className="attendance-semester-dot attendance-semester-dot--official" />공결</span>
                     <span><i className="attendance-semester-dot attendance-semester-dot--pending" />미진행/진행중</span>
                   </div>
-                  <div className="attendance-semester-scroll">
+                  <div
+                    className="attendance-semester-scroll"
+                    role="region"
+                    aria-label="학기 전체 출석 현황 가로 스크롤 표"
+                    tabIndex={0}
+                  >
                     <table className="attendance-semester-table" style={{ minWidth: semesterMatrixMinWidth }}>
                       <thead>
                         <tr>
