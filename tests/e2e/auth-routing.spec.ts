@@ -473,6 +473,8 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page'], op
   continuous?: boolean
   continuousWithoutPolicy?: boolean
   checkInRequests?: number[]
+  activeSessionRequests?: number[]
+  semesterMatrixRequests?: number[]
 }) {
   await page.addInitScript(() => {
     class MockWebSocket {
@@ -527,6 +529,7 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page'], op
   })
 
   await page.route('**/api/students/20201234/courses/CSE116/attendance/active-sessions', async (route) => {
+    options?.activeSessionRequests?.push(Date.now())
     await route.fulfill({
       json: apiEnvelope({
         course_code: 'CSE116',
@@ -605,6 +608,7 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page'], op
   })
 
   await page.route('**/api/students/20201234/courses/CSE116/attendance/semester-matrix', async (route) => {
+    options?.semesterMatrixRequests?.push(Date.now())
     await route.fulfill({
       json: apiEnvelope({
         ...studentSemesterMatrix,
@@ -688,6 +692,32 @@ test('unauthorized course restore falls back to a safe boundary', async ({ page 
 
   await expect(page).toHaveURL(/\/dashboard$/)
   await expect(page.getByText('해당 강의 경로에 접근할 수 없습니다.')).toBeVisible()
+})
+
+test('slow session bootstrap falls back to login instead of holding the session check screen', async ({ page }) => {
+  await page.route('**/health', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+    await route.fulfill({ json: { status: 'ok' } }).catch(() => {})
+  })
+
+  await page.route('**/api/auth/bootstrap', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+    await route.fulfill({
+      status: 401,
+      json: {
+        success: false,
+        error: {
+          code: 'UNAUTHENTICATED',
+          message: 'authentication is required',
+        },
+      },
+    }).catch(() => {})
+  })
+
+  await page.goto('/')
+
+  await expect(page.getByText('세션 확인 중')).toBeVisible()
+  await expect(page.locator('#login-form')).toBeVisible({ timeout: 5000 })
 })
 
 test('manual attendance selection routes to roster and shows required roster columns', async ({ page }) => {
@@ -997,7 +1027,9 @@ test('closing smart attendance refreshes roster state without requiring manual r
 })
 
 test('student attendance page shows one bundle card with one check-in action', async ({ page }) => {
-  await mockStudentBundleApp(page)
+  const activeSessionRequests: number[] = []
+  const semesterMatrixRequests: number[] = []
+  await mockStudentBundleApp(page, { activeSessionRequests, semesterMatrixRequests })
 
   await page.goto('/courses/CSE116/attendance')
 
@@ -1015,6 +1047,11 @@ test('student attendance page shows one bundle card with one check-in action', a
   await expect(page.getByText('1개 차시 출석 가능 / 1개 확인 필요')).toBeVisible()
   await expect(page.getByText('2차시 2교시: 등록 단말이 현재 강의실 네트워크에서 관측되지 않았습니다.')).toBeVisible()
   await expect(page.getByRole('button', { name: '출석하기' })).toBeVisible()
+
+  expect(semesterMatrixRequests).toHaveLength(1)
+  await page.waitForTimeout(11000)
+  expect(activeSessionRequests.length).toBeGreaterThanOrEqual(2)
+  expect(semesterMatrixRequests).toHaveLength(1)
 
   await page.getByRole('button', { name: '출석하기' }).click()
   await expect(page.getByText('스마트 출석이 반영되었습니다.')).toBeVisible()
