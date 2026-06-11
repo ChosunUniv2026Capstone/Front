@@ -1928,8 +1928,17 @@ function App() {
     if (courseSection !== 'attendance' || !selectedCourse || !currentUser) return
     if (currentUser.role !== 'student') return
     const refresh = window.setInterval(() => {
-      void refreshStudentAttendance(selectedCourse.course_code)
+      void refreshStudentActiveAttendanceSessions(selectedCourse.course_code)
     }, 10000)
+    return () => window.clearInterval(refresh)
+  }, [courseSection, currentUser, refreshStudentActiveAttendanceSessions, selectedCourse])
+
+  useEffect(() => {
+    if (courseSection !== 'attendance' || !selectedCourse || !currentUser) return
+    if (currentUser.role !== 'student') return
+    const refresh = window.setInterval(() => {
+      void refreshStudentAttendance(selectedCourse.course_code)
+    }, 60000)
     return () => window.clearInterval(refresh)
   }, [courseSection, currentUser, refreshStudentAttendance, selectedCourse])
 
@@ -1955,20 +1964,20 @@ function App() {
           return
         }
         if (currentUser.role === 'student') {
-          void refreshStudentAttendance(selectedCourse.course_code)
+          void refreshStudentActiveAttendanceSessions(selectedCourse.course_code)
         } else {
           void refreshProfessorAttendance(selectedCourse.course_code)
         }
       } catch {
         if (currentUser.role === 'student') {
-          void refreshStudentAttendance(selectedCourse.course_code)
+          void refreshStudentActiveAttendanceSessions(selectedCourse.course_code)
         } else {
           void refreshProfessorAttendance(selectedCourse.course_code)
         }
       }
     }
     return () => socket.close()
-  }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentAttendance])
+  }, [courseSection, currentUser, selectedCourse, refreshProfessorAttendance, refreshStudentActiveAttendanceSessions])
 
   const loadStudentAssignmentList = useCallback(async (courseCode = selectedCourse?.course_code) => {
     if (!currentUser || currentUser.role !== 'student' || !courseCode) return

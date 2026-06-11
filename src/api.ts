@@ -815,12 +815,15 @@ export function buildAttendanceWebSocketUrl(
 }
 
 const API_BASE = resolveBackendHttpBase()
+const HEALTH_CHECK_TIMEOUT_MS = 2_500
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 2_500
 let authFailureHandler: (() => void) | null = null
 let refreshPromise: Promise<LoginResponse> | null = null
 
 type RequestOptions = {
   allowSessionRefresh?: boolean
   suppressAuthFailureHandler?: boolean
+  timeoutMs?: number
 }
 
 export class ApiRequestError extends Error {
@@ -855,11 +858,47 @@ async function requestInternal<T>(path: string, init?: RequestInit, options: Req
     headers.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  let timeoutElapsed = false
+  let abortController: AbortController | null = null
+  const parentSignal = init?.signal
+  const requestInit: RequestInit = {
+    ...init,
     credentials: 'include',
     headers,
-    ...init,
-  })
+  }
+
+  if (options.timeoutMs != null && options.timeoutMs > 0) {
+    abortController = new AbortController()
+    const abortFromParent = () => abortController?.abort(parentSignal?.reason)
+    if (parentSignal?.aborted) {
+      abortFromParent()
+    } else {
+      parentSignal?.addEventListener('abort', abortFromParent, { once: true })
+    }
+    timeoutId = setTimeout(() => {
+      timeoutElapsed = true
+      abortController?.abort()
+    }, options.timeoutMs)
+    requestInit.signal = abortController.signal
+  }
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${path}`, requestInit)
+  } catch (error) {
+    if (timeoutElapsed) {
+      throw new ApiRequestError('Request timed out', 0, 'REQUEST_TIMEOUT', {
+        path,
+        timeout_ms: options.timeoutMs,
+      })
+    }
+    throw error
+  } finally {
+    if (timeoutId != null) {
+      clearTimeout(timeoutId)
+    }
+  }
 
   if (response.status === 401 && options.allowSessionRefresh !== false && shouldTrySessionRefresh(path)) {
     try {
@@ -925,10 +964,11 @@ async function requestInternal<T>(path: string, init?: RequestInit, options: Req
   return payload as T
 }
 
-async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function authRequest<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
   return requestInternal<T>(path, init, {
     allowSessionRefresh: false,
     suppressAuthFailureHandler: true,
+    ...options,
   })
 }
 
@@ -945,8 +985,8 @@ async function refreshAccessToken() {
   return refreshPromise
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestInternal<T>(path, init)
+async function request<T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> {
+  return requestInternal<T>(path, init, options)
 }
 
 function buildApiUrl(path: string) {
@@ -983,7 +1023,7 @@ function noticeFormData(payload: { title: string; body: string; course_code?: st
 }
 
 export const api = {
-  health: () => request<{ status?: string }>('/health'),
+  health: () => request<{ status?: string }>('/health', undefined, { timeoutMs: HEALTH_CHECK_TIMEOUT_MS }),
   login: (payload: { login_id: string; password: string }) =>
     authRequest<LoginResponse>('/api/auth/login', {
       method: 'POST',
@@ -991,10 +1031,14 @@ export const api = {
     }),
   bootstrapSession: async () => {
     try {
-      return await authRequest<LoginResponse>('/api/auth/bootstrap')
+      return await authRequest<LoginResponse>('/api/auth/bootstrap', undefined, {
+        timeoutMs: AUTH_BOOTSTRAP_TIMEOUT_MS,
+      })
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 404) {
-        return authRequest<LoginResponse>('/api/auth/me')
+        return authRequest<LoginResponse>('/api/auth/me', undefined, {
+          timeoutMs: AUTH_BOOTSTRAP_TIMEOUT_MS,
+        })
       }
       throw error
     }
