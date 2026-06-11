@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.7.1...smart-class-front-v0.7.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* **frontend:** make semester scroll visible ([dbb2dfc](https://github.com/ChosunUniv2026Capstone/Front/commit/dbb2dfcb7124dad5687eafcd2e978b4fb60c2eba))
+
 ## [0.7.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.7.0...smart-class-front-v0.7.1) (2026-06-11)
 
 
