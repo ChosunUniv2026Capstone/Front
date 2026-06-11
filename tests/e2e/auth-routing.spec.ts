@@ -462,6 +462,7 @@ async function mockProfessorFlowApp(page: Parameters<typeof test>[0]['page'], op
 
 async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page'], options?: {
   continuous?: boolean
+  continuousWithoutPolicy?: boolean
   checkInRequests?: number[]
 }) {
   await page.addInitScript(() => {
@@ -535,8 +536,20 @@ async function mockStudentBundleApp(page: Parameters<typeof test>[0]['page'], op
             slot_start_at: '15:00:00',
             slot_end_at: '16:00:00',
             expires_at: '2099-03-03T15:10:00Z',
-            attendance_policy: options?.continuous ? 'continuous_presence_v1' : 'smart_window_v1',
-            can_check_in: !options?.continuous,
+            attendance_policy: options?.continuous
+              ? (options.continuousWithoutPolicy ? null : 'continuous_presence_v1')
+              : 'smart_window_v1',
+            check_in_policy: options?.continuous ? 'disabled_continuous_presence' : 'smart_window_self_check_in',
+            can_check_in: options?.continuousWithoutPolicy ? true : !options?.continuous,
+            continuous_presence: options?.continuous
+              ? {
+                  panel_color: 'red',
+                  current_presence_state: 'away',
+                  away_seconds: 720,
+                  status_candidate: 'late',
+                  last_presence_reason: '강의실 이탈 감지',
+                }
+              : null,
             panel_color: options?.continuous ? 'red' : null,
             current_presence_state: options?.continuous ? 'away' : null,
             away_seconds: options?.continuous ? 720 : null,
@@ -986,6 +999,7 @@ test('student attendance page shows one bundle card with one check-in action', a
 
   await expect(page.getByText('스마트 출석 현황')).toBeVisible()
   await expect(page.locator('.attendance-semester-table')).toBeVisible()
+  await expect(page.locator('.attendance-semester-scroll')).toHaveCSS('overflow-x', 'auto')
   await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
   await expect(page.getByText('1차시 1교시 · 2차시 2교시')).toBeVisible()
   await expect(page.getByText('1개 차시 출석 가능 / 1개 확인 필요')).toBeVisible()
@@ -998,11 +1012,13 @@ test('student attendance page shows one bundle card with one check-in action', a
 
 test('student continuous attendance shows status panel without check-in action', async ({ page }) => {
   const checkInRequests: number[] = []
-  await mockStudentBundleApp(page, { continuous: true, checkInRequests })
+  await mockStudentBundleApp(page, { continuous: true, continuousWithoutPolicy: true, checkInRequests })
 
   await page.goto('/courses/CSE116/attendance')
 
   await expect(page.getByText('캡스톤 디자인 A 스마트출석')).toBeVisible()
+  await expect(page.getByRole('button', { name: '출석 상태: 수업 중 이탈' })).toBeVisible()
+  await expect(page.getByText('출석 확인')).toHaveCount(0)
   await expect(page.getByText('자동 재실 모니터링')).toBeVisible()
   await expect(page.getByLabel('자동 재실 출석 상태')).toContainText('출석 중 이탈')
   await expect(page.getByLabel('자동 재실 출석 상태')).toContainText('누적 이탈 12분')

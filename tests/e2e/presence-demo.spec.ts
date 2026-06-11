@@ -193,7 +193,7 @@ test('admin overlay controls and student eligibility change are visible', async 
   await page.getByLabel('비밀번호').fill('devpass123')
   await page.getByRole('button', { name: '로그인' }).click()
   await page.getByRole('button', { name: '바로가기' }).click()
-  await page.getByRole('button', { name: '출석 확인' }).click()
+  await page.getByRole('button', { name: '출석 상태: 수업시간 아님' }).click()
   await page.getByRole('button', { name: '인접성 확인' }).click()
   await expect(page.getByText('강의실 인접 확인됨')).toBeVisible()
   await expect(page.getByText('reason_code: OK')).toHaveCount(0)
