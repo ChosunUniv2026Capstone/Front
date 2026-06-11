@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.7.0...smart-class-front-v0.7.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **frontend:** surface continuous attendance state ([ac39d93](https://github.com/ChosunUniv2026Capstone/Front/commit/ac39d93be0993672e79b7dcafa5de00aa09c3fda))
+
 ## [0.7.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.6.1...smart-class-front-v0.7.0) (2026-06-10)
 
 
