@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.7.4...smart-class-front-v0.8.0) (2026-06-12)
+
+
+### Features
+
+* **frontend:** group demo APs under classroom network cards ([55a4e0f](https://github.com/ChosunUniv2026Capstone/Front/commit/55a4e0fd3f094deb9daeb58a89de239c7a91e6a0))
+
 ## [0.7.4](https://github.com/ChosunUniv2026Capstone/Front/compare/smart-class-front-v0.7.3...smart-class-front-v0.7.4) (2026-06-11)
 
 
