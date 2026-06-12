@@ -969,6 +969,40 @@ pre {
   gap: 8px;
 }
 
+.admin-presence-tree {
+  gap: 12px;
+}
+
+.admin-presence-source {
+  display: grid;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 3px solid #cfe0fd;
+}
+
+.admin-presence-source--demo {
+  border-left-color: #86efac;
+}
+
+.admin-presence-source-head strong {
+  color: var(--text);
+}
+
+.admin-presence-meta,
+.admin-presence-ap-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-ap-panel--live > .helper-row {
+  border-color: #cfe0fd;
+}
+
+.admin-ap-panel--demo > .helper-row {
+  border-color: #bbf7d0;
+  background: linear-gradient(180deg, #ffffff 0%, #f1fff6 100%);
+}
+
 .secondary-button {
   background: var(--surface-soft);
   color: var(--text);

@@ -7,7 +7,9 @@ const apiEnvelope = <T,>(data: T) => {
   return { success: true, data, message: 'ok', meta: {} }
 }
 
-const adminSnapshot = (overlayActive: boolean) => ({
+type AdminSnapshotSource = 'live' | 'demo'
+
+const adminSnapshot = (overlayActive: boolean, source: AdminSnapshotSource) => ({
   cacheHit: false,
   overlayActive,
   classroomCode: 'B101',
@@ -17,8 +19,8 @@ const adminSnapshot = (overlayActive: boolean) => ({
     {
       id: 1,
       classroom_code: 'B101',
-      ap_id: 'phy3-ap0',
-      ssid: 'CU-B101-2G-2',
+      ap_id: source === 'demo' ? 'phy3-ap0' : 'phy1-ap0',
+      ssid: source === 'demo' ? 'CU-B101-DEMO' : 'CU-B101-REAL',
       gateway_host: 'gw',
       signal_threshold_dbm: -65,
       collection_mode: 'dummy',
@@ -35,22 +37,22 @@ const adminSnapshot = (overlayActive: boolean) => ({
   ],
   aps: [
     {
-      apId: 'phy3-ap0',
-      ssid: 'CU-B101-2G-2',
-      sourceCommand: 'iw dev phy3-ap0 station dump',
+      apId: source === 'demo' ? 'phy3-ap0' : 'phy1-ap0',
+      ssid: source === 'demo' ? 'CU-B101-DEMO' : 'CU-B101-REAL',
+      sourceCommand: source === 'demo' ? 'iw dev phy3-ap0 station dump' : 'iw dev phy1-ap0 station dump',
       stations: [
         {
-          macAddress: '52:54:00:12:34:56',
+          macAddress: source === 'demo' ? '52:54:00:12:34:56' : '52:54:00:AA:BB:CC',
           associated: overlayActive,
           authenticated: true,
           authorized: true,
-          signalDbm: -47,
+          signalDbm: source === 'demo' ? -47 : -51,
           connectedSeconds: 95,
           rxBytes: 120101,
           txBytes: 94310,
-          deviceLabel: 'Choi Phone',
-          ownerName: 'Kim Student 06',
-          ownerLoginId: '20201239',
+          deviceLabel: source === 'demo' ? 'Choi Phone' : 'Real Phone',
+          ownerName: source === 'demo' ? 'Kim Student 06' : 'Real Student 01',
+          ownerLoginId: source === 'demo' ? '20201239' : '20209999',
         },
       ],
     },
@@ -112,17 +114,19 @@ test('admin overlay controls and student eligibility change are visible', async 
   })
 
   await page.route('**/api/admin/presence/classrooms/B101/snapshot**', async (route) => {
-    await route.fulfill({ json: apiEnvelope(adminSnapshot(overlayApplied)) })
+    const url = new URL(route.request().url())
+    const source = url.searchParams.get('source') === 'demo' ? 'demo' : 'live'
+    await route.fulfill({ json: apiEnvelope(adminSnapshot(source === 'demo' ? overlayApplied : true, source)) })
   })
 
   await page.route('**/api/admin/presence/classrooms/B101/dummy-controls', async (route) => {
     overlayApplied = true
-    await route.fulfill({ json: apiEnvelope(adminSnapshot(true)) })
+    await route.fulfill({ json: apiEnvelope(adminSnapshot(true, 'demo')) })
   })
 
   await page.route('**/api/admin/presence/classrooms/B101/dummy-controls/reset', async (route) => {
     overlayApplied = false
-    await route.fulfill({ json: apiEnvelope(adminSnapshot(false)) })
+    await route.fulfill({ json: apiEnvelope(adminSnapshot(false, 'demo')) })
   })
 
   await page.route('**/api/students/20201239/courses', async (route) => {
@@ -181,11 +185,14 @@ test('admin overlay controls and student eligibility change are visible', async 
   await expect(page.getByRole('combobox').nth(1)).toContainText('20201239 / Kim Student 06 / Choi Phone / 52:54:00:12:34:56')
   await page.getByRole('button', { name: '재실 상태 적용' }).click()
   await page.getByRole('button', { name: '강의실 및 네트워크 현황' }).click()
-  await expect(page.getByText('데모 AP 모니터링')).toBeVisible()
+  await expect(page.getByText('데모 AP 모니터링')).toHaveCount(0)
   await page.getByRole('button', { name: /B101/ }).first().click()
-  await expect(page.getByText('phy3-ap0').first()).toBeVisible()
+  const networkCard = page.locator('.admin-card', { hasText: 'B101' }).first()
+  await expect(networkCard.getByText('실제 AP · phy1-ap0')).toBeVisible()
+  await expect(networkCard.getByText('Real Student 01')).toBeVisible()
+  await expect(networkCard.getByText('Demo AP · phy3-ap0')).toBeVisible()
+  await expect(networkCard.getByText('Kim Student 06')).toBeVisible()
   await expect(page.getByText('10초 자동 켜기')).toBeVisible()
-  await page.getByRole('button', { name: /Demo AP · B101/ }).click()
   await expect(page.getByRole('button', { name: /데모 AP 전체/ })).toBeVisible()
 
   await page.getByRole('button', { name: '로그아웃' }).click()

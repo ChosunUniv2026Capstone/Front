@@ -33,10 +33,8 @@ import {
   type StudentLearningProgressItem,
   type AdminPresenceOverlayRequest,
   type AdminPresenceSnapshot,
-  type AdminPresenceStation,
   type AttendanceCsvExportVariant,
   api,
-  formatJson,
   setAuthFailureHandler,
   type Classroom,
   type ClassroomNetwork,
@@ -56,6 +54,7 @@ import {
   type AttendancePage,
   type CourseSection,
 } from './router'
+import { AdminNetworkPresenceCard } from './AdminNetworkPresenceCard'
 
 type AppView = 'dashboard' | 'profile' | 'course' | 'notice'
 type AdminTab = 'users' | 'networks' | 'demo'
@@ -1220,16 +1219,6 @@ function App() {
     }
   }
 
-  function handleSelectAdminClassroom(classroomCode: string) {
-    setExpandedAdminClassrooms((current) => ({
-      ...current,
-      [classroomCode]: !current[classroomCode],
-    }))
-    if (!adminPresenceSnapshots[classroomCode] && !adminPresenceLoading[classroomCode]) {
-      void refreshAdminPresenceSnapshot(classroomCode)
-    }
-  }
-
   function handleRefreshAdminClassroom(classroomCode: string) {
     setExpandedAdminClassrooms((current) => ({
       ...current,
@@ -1253,11 +1242,22 @@ function App() {
     }
   }
 
-  function handleSelectAdminDemoClassroom(classroomCode: string) {
+  function handleSelectAdminNetworkClassroom(classroomCode: string) {
+    const nextExpanded = !(
+      expandedAdminClassrooms[classroomCode] || expandedAdminDemoClassrooms[classroomCode]
+    )
+    setExpandedAdminClassrooms((current) => ({
+      ...current,
+      [classroomCode]: nextExpanded,
+    }))
     setExpandedAdminDemoClassrooms((current) => ({
       ...current,
-      [classroomCode]: !current[classroomCode],
+      [classroomCode]: nextExpanded,
     }))
+    if (!nextExpanded) return
+    if (!adminPresenceSnapshots[classroomCode] && !adminPresenceLoading[classroomCode]) {
+      void refreshAdminPresenceSnapshot(classroomCode)
+    }
     if (!adminDemoPresenceSnapshots[classroomCode] && !adminDemoPresenceLoading[classroomCode]) {
       void refreshAdminPresenceSnapshot(classroomCode, { source: 'demo' })
     }
@@ -3601,145 +3601,6 @@ function App() {
     )
   }
 
-  function renderPresenceStation(station: AdminPresenceStation) {
-    return (
-      <article key={`${station.macAddress}-${station.ownerLoginId ?? 'guest'}`} className="entity-row">
-        <div>
-          <p className="entity-title">{station.ownerName ?? station.deviceLabel ?? station.macAddress}</p>
-          <p className="entity-subtitle">
-            {station.ownerLoginId ?? '미등록'} · {station.deviceLabel ?? '단말명 없음'} · {station.macAddress}
-          </p>
-        </div>
-        <span className={`badge${station.associated ? '' : ' badge--muted'}`}>
-          {station.associated ? '연결됨' : '연결 끊김'}
-        </span>
-      </article>
-    )
-  }
-
-  function renderAdminPresenceCard(classroom: Classroom, mode: 'live' | 'demo' = 'live') {
-    const isDemo = mode === 'demo'
-    const snapshot = isDemo
-      ? adminDemoPresenceSnapshots[classroom.classroom_code]
-      : adminPresenceSnapshots[classroom.classroom_code]
-    const isSelected = Boolean(
-      isDemo
-        ? expandedAdminDemoClassrooms[classroom.classroom_code]
-        : expandedAdminClassrooms[classroom.classroom_code],
-    )
-    const isLoading = Boolean(
-      isDemo
-        ? adminDemoPresenceLoading[classroom.classroom_code]
-        : adminPresenceLoading[classroom.classroom_code],
-    )
-    const autoRefreshEnabled = Boolean(adminPresenceAutoRefresh[classroom.classroom_code])
-    const classroomNetworks = adminNetworks.filter(
-      (network) => network.classroom_code === classroom.classroom_code,
-    )
-    const stationCount = snapshot?.aps.reduce((total, ap) => total + ap.stations.length, 0) ?? 0
-    const demoEnabled = stationCount > 0
-
-    return (
-      <article key={`${mode}-${classroom.id}`} className={`admin-card${isSelected ? ' admin-card--selected' : ''}`}>
-        <div className="admin-card-head">
-          <button
-            type="button"
-            className="admin-card-selector"
-            onClick={() => (
-              isDemo
-                ? handleSelectAdminDemoClassroom(classroom.classroom_code)
-                : handleSelectAdminClassroom(classroom.classroom_code)
-            )}
-            aria-expanded={isSelected}
-          >
-            <span className="entity-title">{isDemo ? 'Demo AP · ' : ''}{classroom.classroom_code}</span>
-            <span className="entity-subtitle">
-              {classroom.name} · {classroom.building ?? '-'} / {classroom.floor_label ?? '-'}
-            </span>
-          </button>
-          <span className="info-chip">
-            {snapshot ? `${snapshot.collectionMode ?? 'snapshot'} · AP ${snapshot.aps.length} · 단말 ${stationCount}` : `AP ${classroomNetworks.length}`}
-          </span>
-        </div>
-        <div className="admin-card-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => (
-              isDemo
-                ? handleRefreshAdminDemoClassroom(classroom.classroom_code)
-                : handleRefreshAdminClassroom(classroom.classroom_code)
-            )}
-            disabled={isLoading}
-          >
-            {isLoading ? '새로고침 중...' : '강의실 새로고침'}
-          </button>
-          {isDemo ? (
-            <button
-              type="button"
-              className={demoEnabled ? 'secondary-button is-active' : 'secondary-button'}
-              onClick={() => void handleSetAdminDemoApEnabled(classroom.classroom_code, !demoEnabled)}
-              disabled={isLoading}
-            >
-              데모 AP 전체 {demoEnabled ? 'OFF' : 'ON'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={autoRefreshEnabled ? 'secondary-button is-active' : 'secondary-button'}
-              onClick={() => handleToggleAdminAutoRefresh(classroom.classroom_code)}
-            >
-              10초 자동 {autoRefreshEnabled ? '끄기' : '켜기'}
-            </button>
-          )}
-        </div>
-        {!isSelected ? (
-          <p className="empty-state">
-            {isDemo
-              ? '강의실을 클릭하면 demo AP snapshot 기반 AP/단말 목록을 불러옵니다.'
-              : '강의실을 클릭하면 Redis snapshot 기반 AP/단말 목록을 불러옵니다.'}
-          </p>
-        ) : isLoading && !snapshot ? (
-          <p className="empty-state">현재 연결 단말을 불러오는 중입니다.</p>
-        ) : snapshot ? (
-          <div className="helper-list">
-            <div className="helper-row">
-              <strong>수집 방식</strong>
-              <span>{snapshot.collectionMode ?? '-'}{snapshot.cacheHit ? ' · Redis cache' : ' · refresh'}</span>
-            </div>
-            <div className="helper-row">
-              <strong>관측 시각</strong>
-              <span>{formatDateTime(snapshot.observedAt)}</span>
-            </div>
-            <div className="helper-row">
-              <strong>Threshold</strong>
-              <span>
-                {snapshot.classroomNetworks.map((network) => `${network.ap_id} ${network.signal_threshold_dbm ?? -65} dBm`).join(' · ')}
-              </span>
-            </div>
-            {snapshot.aps.map((ap) => (
-              <div key={ap.apId} className="admin-ap-panel">
-                <div className="helper-row">
-                  <strong>{ap.apId}</strong>
-                  <span>{ap.ssid} · 단말 {ap.stations.length}대</span>
-                </div>
-                <div className="entity-list">
-                  {ap.stations.length ? (
-                    ap.stations.map(renderPresenceStation)
-                  ) : (
-                    <p className="empty-state">현재 관측된 단말이 없습니다.</p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <pre>{formatJson(classroomNetworks)}</pre>
-        )}
-      </article>
-    )
-  }
-
   function renderAssignmentCalendar() {
     const calendarCells = getCalendarMonthCells(calendarMonth)
     const todayKey = toDateKey(new Date())
@@ -3935,18 +3796,35 @@ function App() {
             ) : null}
 
             {adminTab === 'networks' ? (
-              <>
-                <SectionCard title="강의실 및 네트워크 현황" action={<span className="info-chip">실제 AP</span>}>
-                  <div className="admin-grid">
-                    {adminClassrooms.map((classroom) => renderAdminPresenceCard(classroom, 'live'))}
-                  </div>
-                </SectionCard>
-                <SectionCard title="데모 AP 모니터링" action={<span className="info-chip">Demo AP 전체 ON/OFF</span>}>
-                  <div className="admin-grid">
-                    {adminClassrooms.map((classroom) => renderAdminPresenceCard(classroom, 'demo'))}
-                  </div>
-                </SectionCard>
-              </>
+              <SectionCard title="강의실 및 네트워크 현황" action={<span className="info-chip">실제 + Demo AP</span>}>
+                <div className="admin-grid">
+                  {adminClassrooms.map((classroom) => {
+                    const classroomCode = classroom.classroom_code
+                    const classroomNetworks = adminNetworks.filter(
+                      (network) => network.classroom_code === classroomCode,
+                    )
+                    return (
+                      <AdminNetworkPresenceCard
+                        key={classroom.id}
+                        classroom={classroom}
+                        classroomNetworks={classroomNetworks}
+                        liveSnapshot={adminPresenceSnapshots[classroomCode]}
+                        demoSnapshot={adminDemoPresenceSnapshots[classroomCode]}
+                        isExpanded={Boolean(expandedAdminClassrooms[classroomCode] || expandedAdminDemoClassrooms[classroomCode])}
+                        isLiveLoading={Boolean(adminPresenceLoading[classroomCode])}
+                        isDemoLoading={Boolean(adminDemoPresenceLoading[classroomCode])}
+                        isAutoRefreshEnabled={Boolean(adminPresenceAutoRefresh[classroomCode])}
+                        formatDateTime={formatDateTime}
+                        onToggle={handleSelectAdminNetworkClassroom}
+                        onRefreshLive={handleRefreshAdminClassroom}
+                        onRefreshDemo={handleRefreshAdminDemoClassroom}
+                        onToggleAutoRefresh={handleToggleAdminAutoRefresh}
+                        onToggleDemoApEnabled={(code, enabled) => void handleSetAdminDemoApEnabled(code, enabled)}
+                      />
+                    )
+                  })}
+                </div>
+              </SectionCard>
             ) : null}
 
             {adminTab === 'demo' ? (
